@@ -1,6 +1,8 @@
 {
-  "buildCommand": "flutter config --enable-web && flutter pub get && flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
-  "outputDirectory": "build/web",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
+  "installCommand": "if [ ! -d \"$HOME/flutter/bin\" ]; then git clone --depth 1 -b stable https://github.com/flutter/flutter.git \"$HOME/flutter\"; fi; export PATH=\"$HOME/flutter/bin:$PATH\"; flutter config --no-analytics --enable-web; flutter pub get",
+  "buildCommand": "export PATH=\"$HOME/flutter/bin:$PATH\"; flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
+  "outputDirectory": "build/web",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

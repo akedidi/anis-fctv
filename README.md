@@ -63,19 +63,28 @@ cd api && npm run dev:worker   # http://127.0.0.1:3000
 
 ## Vercel (`web-snowy-alpha-91` / projet `web`)
 
-Le dossier Vercel Root Directory est `web/`, mais **`web/vercel.json` build maintenant Flutter** (`../flutter`) vers `web/out`, avec :
+Root Directory Vercel = **`flutter/`** (pas `web/`). Build = Flutter web avec :
 
 `API_BASE=https://fctv33-api.kedidi-anis.workers.dev`
 
-Donc l’UI prod = **même app que `flutter run`**, pas le vieux Next.js.
+L’UI prod = **la même app que `flutter run`**. Le Next.js dans `web/` n’est plus déployé sur cette URL.
 
-| Appel | Où |
-|-------|-----|
-| live / match / events / lineup / resolve | **Workers** (client → Workers) |
-| HLS playlist + segments | **Workers** `/api/hls` (Referer CDN) |
-| UI (HTML/JS) | **Vercel** static |
+| Appel | Où | Pourquoi |
+|-------|-----|----------|
+| live / match / events / lineup / resolve | **Workers** | session + signatures côté serveur |
+| HLS playlist + segments | **Workers** `/api/hls` | Referer / geo CDN obligatoires |
+| UI (HTML/JS) | **Vercel** static | CDN front |
 
-Le Next.js dans `web/src` reste pour dev local (`cd web && npm run dev`) seulement.
+On ne peut pas appeler le CDN match/events directement depuis le navigateur (auth/session). Seul le player consomme le flux HLS, toujours via le proxy Workers.
+
+Redeploy rapide (build local) :
+
+```bash
+cd flutter
+flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev
+# temporairement rootDirectory=null sur le projet Vercel, puis :
+npx vercel deploy build/web --prod --yes
+```
 
 
 ## Android TV
