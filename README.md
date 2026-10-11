@@ -61,16 +61,22 @@ Local worker:
 cd api && npm run dev:worker   # http://127.0.0.1:3000
 ```
 
-## Vercel
+## Vercel (`web-snowy-alpha-91` / projet `web`)
 
-Le projet Vercel connecté au repo est **`web`** (Next.js UI). L’API ne tourne **pas** sur Vercel — elle est sur Workers (ci-dessus). Le client web appelle directement `https://fctv33-api.kedidi-anis.workers.dev`.
+Le dossier Vercel Root Directory est `web/`, mais **`web/vercel.json` build maintenant Flutter** (`../flutter`) vers `web/out`, avec :
 
-**Flutter** (projet Vercel séparé éventuel) :
+`API_BASE=https://fctv33-api.kedidi-anis.workers.dev`
 
-```bash
-cd flutter
-flutter build web --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev
-```
+Donc l’UI prod = **même app que `flutter run`**, pas le vieux Next.js.
+
+| Appel | Où |
+|-------|-----|
+| live / match / events / lineup / resolve | **Workers** (client → Workers) |
+| HLS playlist + segments | **Workers** `/api/hls` (Referer CDN) |
+| UI (HTML/JS) | **Vercel** static |
+
+Le Next.js dans `web/src` reste pour dev local (`cd web && npm run dev`) seulement.
+
 
 ## Android TV
 

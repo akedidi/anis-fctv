@@ -93,7 +93,11 @@ export function HlsPlayer({
       } else if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
-          lowLatencyMode: true,
+          // LL-HLS stalls hard when the Workers HLS proxy is a hop behind the live edge.
+          lowLatencyMode: false,
+          liveSyncDurationCount: 3,
+          liveMaxLatencyDurationCount: 10,
+          maxBufferLength: 30,
           backBufferLength: 30,
         });
         hlsRef.current = hls;
@@ -103,7 +107,18 @@ export function HlsPlayer({
           void kickAutoplay();
         });
         hls.on(Hls.Events.ERROR, (_e, data) => {
-          if (data.fatal) setError("Playback failed");
+          if (!data.fatal) return;
+          switch (data.type) {
+            case Hls.ErrorTypes.NETWORK_ERROR:
+              hls.startLoad();
+              break;
+            case Hls.ErrorTypes.MEDIA_ERROR:
+              hls.recoverMediaError();
+              break;
+            default:
+              setError("Playback failed");
+              break;
+          }
         });
       } else {
         setError("HLS not supported");

@@ -1,9 +1,7 @@
 {
-  "framework": "nextjs",
-  "regions": ["iad1"],
-  "functions": {
-    "src/app/api/**/*.ts": {
-      "maxDuration": 60
-    }
-  }
+  "framework": null,
+  "installCommand": "echo 'Flutter app build — deps via buildCommand'",
+  "buildCommand": "set -e; if ! command -v flutter >/dev/null 2>&1; then git clone --depth 1 -b stable https://github.com/flutter/flutter.git \"$HOME/flutter\"; export PATH=\"$HOME/flutter/bin:$PATH\"; flutter config --no-analytics; fi; export PATH=\"$HOME/flutter/bin:$PATH\"; cd ../flutter && flutter config --enable-web && flutter pub get && flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev && rm -rf ../web/out && mkdir -p ../web/out && cp -R build/web/. ../web/out/",
+  "outputDirectory": "out",
+  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
