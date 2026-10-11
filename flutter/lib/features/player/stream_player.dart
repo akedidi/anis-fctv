@@ -200,19 +200,39 @@ class StreamPlayerState extends State<StreamPlayer> {
       if (!mounted || gen != _openGen) return;
     }
     try {
+      // Web: async resolve loses the tap gesture — browsers only allow muted autoplay.
+      final wantSound = !_muted;
+      if (kIsWeb) {
+        await _player.setVolume(0);
+      }
       await _player.open(Media(url), play: true);
       if (!mounted || gen != _openGen) return;
       _loadedUrl = url;
       _loadedToken = token;
-      // Web/HLS sometimes needs an explicit play after open.
       await _player.play();
       if (!mounted || gen != _openGen) return;
-      _playbackWatchdog = Timer(const Duration(seconds: 8), () {
+      if (kIsWeb && wantSound) {
+        // Best-effort unmute after muted autoplay engages (may stay muted until user taps).
+        try {
+          await _player.setVolume(100);
+          if (mounted) setState(() => _muted = false);
+        } catch (_) {
+          if (mounted) setState(() => _muted = true);
+        }
+      }
+      _playbackWatchdog = Timer(const Duration(seconds: 5), () {
         if (!mounted || gen != _openGen) return;
         if (_awaitingPlayback && !_playing) {
-          setState(() {
-            _awaitingPlayback = false;
-            _showCenterChrome = true;
+          // Last resort: another play() then show the center control.
+          unawaited(_player.play());
+          Future<void>.delayed(const Duration(milliseconds: 400), () {
+            if (!mounted || gen != _openGen) return;
+            if (_awaitingPlayback && !_playing) {
+              setState(() {
+                _awaitingPlayback = false;
+                _showCenterChrome = true;
+              });
+            }
           });
         }
       });

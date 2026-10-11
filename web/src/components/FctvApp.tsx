@@ -177,6 +177,14 @@ export function FctvApp() {
     setActiveServerId(server.id);
     setResolving(true);
     setError(null);
+    // Capture the click gesture: unlock a muted media element before the async resolve
+    // so the browser still allows autoplay when the URL arrives.
+    const existing = document.querySelector(".player-stage video") as HTMLVideoElement | null;
+    if (existing) {
+      existing.muted = true;
+      setMuted(true);
+      void existing.play().catch(() => undefined);
+    }
     try {
       const q = new URLSearchParams({
         matchId: String(match.matchId),

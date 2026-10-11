@@ -13,6 +13,32 @@ type Props = {
   autoPlay?: boolean;
 };
 
+/** Try play; if the browser blocks unmuted autoplay, mute and retry. */
+async function startPlayback(
+  video: HTMLVideoElement,
+  muted: boolean,
+  onMutedChange: (muted: boolean) => void,
+): Promise<boolean> {
+  video.muted = muted;
+  try {
+    await video.play();
+    return true;
+  } catch {
+    // Async resolve loses the click gesture — muted autoplay is allowed.
+    if (!video.muted) {
+      video.muted = true;
+      onMutedChange(true);
+      try {
+        await video.play();
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    return false;
+  }
+}
+
 export function HlsPlayer({
   src,
   title,
@@ -28,6 +54,7 @@ export function HlsPlayer({
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pipSupported, setPipSupported] = useState(false);
+  const [needsGesture, setNeedsGesture] = useState(false);
 
   useEffect(() => {
     setPipSupported(
@@ -41,14 +68,28 @@ export function HlsPlayer({
     const video = videoRef.current;
     if (!video || !src) return;
     setError(null);
+    setNeedsGesture(false);
     let cancelled = false;
 
-    const start = async () => {
+    const kickAutoplay = async () => {
+      if (!autoPlay || cancelled) return;
+      const ok = await startPlayback(video, muted, onMutedChange);
+      if (!cancelled && !ok) setNeedsGesture(true);
+    };
+
+    const start = () => {
       hlsRef.current?.destroy();
       hlsRef.current = null;
 
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
         video.src = src;
+        const onReady = () => {
+          video.removeEventListener("loadedmetadata", onReady);
+          void kickAutoplay();
+        };
+        video.addEventListener("loadedmetadata", onReady);
+        // Some Safari builds already have metadata cached.
+        if (video.readyState >= 1) onReady();
       } else if (Hls.isSupported()) {
         const hls = new Hls({
           enableWorker: true,
@@ -58,29 +99,25 @@ export function HlsPlayer({
         hlsRef.current = hls;
         hls.loadSource(src);
         hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          void kickAutoplay();
+        });
         hls.on(Hls.Events.ERROR, (_e, data) => {
           if (data.fatal) setError("Playback failed");
         });
       } else {
         setError("HLS not supported");
-        return;
-      }
-
-      if (autoPlay && !cancelled) {
-        try {
-          await video.play();
-        } catch {
-          /* autoplay may require gesture */
-        }
       }
     };
 
-    void start();
+    start();
     return () => {
       cancelled = true;
       hlsRef.current?.destroy();
       hlsRef.current = null;
     };
+    // muted / onMutedChange intentionally omitted — autoplay path reads latest via closure on src change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, autoPlay]);
 
   useEffect(() => {
@@ -98,8 +135,12 @@ export function HlsPlayer({
   const togglePlay = async () => {
     const video = videoRef.current;
     if (!video) return;
-    if (video.paused) await video.play().catch(() => undefined);
-    else video.pause();
+    if (video.paused) {
+      const ok = await startPlayback(video, muted, onMutedChange);
+      if (ok) setNeedsGesture(false);
+    } else {
+      video.pause();
+    }
   };
 
   const togglePiP = async () => {
@@ -125,9 +166,13 @@ export function HlsPlayer({
       <video
         ref={videoRef}
         playsInline
+        autoPlay={autoPlay}
         controls={false}
         muted={muted}
-        onPlay={() => setPlaying(true)}
+        onPlay={() => {
+          setPlaying(true);
+          setNeedsGesture(false);
+        }}
         onPause={() => setPlaying(false)}
         onClick={() => setShowControls((v) => !v)}
         {...{ "x-webkit-airplay": "allow" }}
@@ -148,12 +193,19 @@ export function HlsPlayer({
           </div>
         </div>
       )}
+      {src && !error && needsGesture && !playing && (
+        <button type="button" className="placeholder" onClick={() => void togglePlay()} style={{ cursor: "pointer" }}>
+          <div>
+            <strong>Tap to play</strong>
+            <p>Browser blocked autoplay — click to start.</p>
+          </div>
+        </button>
+      )}
       {src && !error && (
         <div className={`player-overlay ${showControls || !playing ? "is-visible" : ""}`}>
           <div className="top">
             <div className="title">{title}</div>
             <div style={{ display: "flex", gap: 8 }}>
-              {/* Safari exposes AirPlay via the video element / system route picker */}
               <button
                 type="button"
                 className="ctrl"
