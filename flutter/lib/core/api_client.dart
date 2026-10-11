@@ -116,8 +116,11 @@ class FctvApi {
         'sportType': '$sportType',
       }),
     );
-    if (res.statusCode >= 400) return const [];
     final body = jsonDecode(res.body) as Map<String, dynamic>;
+    // Surface failures (401 Vercel protection, 502 cold start) instead of silent [].
+    if (res.statusCode >= 400) {
+      throw Exception(body['error'] ?? 'events failed (${res.statusCode})');
+    }
     return (body['events'] as List? ?? [])
         .whereType<Map>()
         .map((e) => MatchEvent.fromJson(Map<String, dynamic>.from(e)))

@@ -186,9 +186,26 @@ export class ApiClient {
   }
 
   async fetchMatchEvents(matchId: string, sportType: number, language = 0): Promise<MatchEvent[]> {
-    await this.loadSignatures(matchId, sportType);
-    const params: RequestParams = { matchId, sportType, language };
-    return parseMatchEvents(Buffer.from(await this.signedGet(PATH.matchEvent, params, SIGNATURE.detail)));
+    const run = async (): Promise<MatchEvent[]> => {
+      await this.loadSignatures(matchId, sportType);
+      const params: RequestParams = { matchId, sportType, language };
+      return parseMatchEvents(
+        Buffer.from(await this.signedGet(PATH.matchEvent, params, SIGNATURE.detail)),
+      );
+    };
+    try {
+      return await run();
+    } catch {
+      // Cold start / stale BS on Vercel — one retry after clearing local signature cache.
+      this.signatureKeys.clear();
+      this.signatureCacheKey = "";
+      clearSiteBootstrap();
+      this.dataApiBaseUrl = null;
+      this.digit = null;
+      this.context = null;
+      await this.bootstrap(true);
+      return await run();
+    }
   }
 
   async fetchStreamDetail(input: {

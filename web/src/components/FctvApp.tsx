@@ -161,10 +161,17 @@ export function FctvApp() {
       setResolving(false);
     }
 
-    void fetch(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`)
-      .then((r) => r.json())
-      .then((d: { events?: MatchEvent[] }) => setEvents(d.events ?? []))
-      .catch(() => setEvents([]));
+    void fetch(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`, {
+      cache: "no-store",
+    })
+      .then(async (r) => {
+        const d = (await r.json()) as { events?: MatchEvent[]; error?: string };
+        if (!r.ok) throw new Error(d.error ?? `events failed (${r.status})`);
+        setEvents(d.events ?? []);
+      })
+      .catch(() => {
+        // Keep any prior timeline rather than wiping to empty on a flaky Vercel cold start.
+      });
     void fetch(`/api/match/lineup?matchId=${match.matchId}&sportType=${match.sportType}`)
       .then((r) => r.json())
       .then((d: { lineup?: { home: LineupPlayer[]; away: LineupPlayer[] } }) =>

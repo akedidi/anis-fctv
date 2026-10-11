@@ -527,26 +527,182 @@ export type MatchEvent = {
   kind: "goal" | "status" | "info";
 };
 
+function isPrintableLabel(s: string): boolean {
+  if (s.length < 2 || s.length > 120) return false;
+  for (let i = 0; i < s.length; i++) {
+    const code = s.charCodeAt(i);
+    if (code < 32 || code === 127) return false;
+  }
+  return /[\p{L}]/u.test(s);
+}
+
+function sanitizeLabel(raw: string): string {
+  let s = raw.trim();
+  while (s.startsWith("$")) s = s.slice(1).trim();
+  s = s.replace(/^\d{2,4}(-\d{2,4})?\s*:\s*/, "");
+  if (s === "Success" || s === "OK") return "";
+  return s;
+}
+
+function isPlausibleName(s: string): boolean {
+  const t = sanitizeLabel(s);
+  if (!isPrintableLabel(t)) return false;
+  if (/^https?:/i.test(t)) return false;
+  if (t.includes("/")) return false;
+  if (/\.(png|jpg|jpeg|webp)/i.test(t)) return false;
+  if (/^\d+$/.test(t)) return false;
+  if (/^[0-9a-fA-F]{16,}$/.test(t)) return false;
+  return true;
+}
+
+function extractPrintableStrings(data: Buffer, depth = 0): string[] {
+  if (depth > 4 || !data.length) return [];
+  const out: string[] = [];
+  let offset = 0;
+  while (offset < data.length) {
+    try {
+      const [tag, next] = readVarint(data, offset);
+      offset = next;
+      const wire = tag & 0x7;
+      if (wire === 0) {
+        const [, after] = readVarintBig(data, offset);
+        offset = after;
+        continue;
+      }
+      if (wire !== 2) break;
+      const [chunk, after] = readBytes(data, offset);
+      offset = after;
+      const asText = chunk.toString("utf8").trim();
+      if (asText && isPrintableLabel(asText)) out.push(asText);
+      out.push(...extractPrintableStrings(chunk, depth + 1));
+    } catch {
+      break;
+    }
+  }
+  return out;
+}
+
+function pickBestName(candidates: string[]): string {
+  return (
+    candidates
+      .map(sanitizeLabel)
+      .filter(isPlausibleName)
+      .sort((a, b) => b.length - a.length)[0] ?? ""
+  );
+}
+
+/** `PBDataPlayer`: playerId (1), name map<int32,string> (3). */
+function parsePlayerName(blob?: Buffer): string {
+  if (!blob) return "";
+  const fields = readFields(blob);
+  const names = new Map<number, string>();
+  for (const entry of fields.get(3) ?? []) {
+    const ef = readFields(entry);
+    const key = readVarintValue(ef.get(1)?.[0]);
+    const value = utf8(ef.get(2)?.[0]).trim();
+    if (key !== undefined && value) names.set(key, value);
+  }
+  const mapped = names.get(1) ?? names.get(0) ?? [...names.values()][0] ?? "";
+  if (mapped && isPlausibleName(mapped)) return sanitizeLabel(mapped);
+  return pickBestName(extractPrintableStrings(blob));
+}
+
+/** iOS / api `PBDataMatchEvent` — goals, cards, subs, period markers. */
+function parseDataMatchEvent(chunk: Buffer, index: number): MatchEvent | null {
+  const f = readFields(chunk);
+  const type = readVarintValue(f.get(3)?.[0]) ?? 0;
+  const minute = utf8(f.get(4)?.[0]);
+  const score = utf8(f.get(5)?.[0]);
+  const reason = utf8(f.get(6)?.[0]);
+  const side = readVarintValue(f.get(7)?.[0]) ?? 0;
+  const scorer = parsePlayerName(f.get(10)?.[0]);
+  const assist = parsePlayerName(f.get(11)?.[0]);
+  const booked = parsePlayerName(f.get(20)?.[0]);
+  const subIn = parsePlayerName(f.get(30)?.[0]);
+  const subOut = parsePlayerName(f.get(31)?.[0]);
+
+  let kind: MatchEvent["kind"];
+  let text: string;
+  switch (type) {
+    case 101: {
+      kind = "goal";
+      let t = "Goal";
+      if (scorer) t += ` — ${scorer}`;
+      if (assist) t += ` (assist ${assist})`;
+      if (score) t += ` · ${score}`;
+      text = t;
+      break;
+    }
+    case 102: {
+      kind = "goal";
+      text = ["Own goal", scorer && `— ${scorer}`, score && `· ${score}`].filter(Boolean).join(" ");
+      break;
+    }
+    case 103: {
+      kind = "goal";
+      text = ["Penalty", scorer && `— ${scorer}`, score && `· ${score}`].filter(Boolean).join(" ");
+      break;
+    }
+    case 105: {
+      kind = "info";
+      if (subIn && subOut) text = `Sub — ${subIn} on for ${subOut}`;
+      else if (subIn) text = `Sub — ${subIn} on`;
+      else if (subOut) text = `Sub — ${subOut} off`;
+      else text = "Substitution";
+      break;
+    }
+    case 106: {
+      kind = "info";
+      text = ["Yellow card", booked && `— ${booked}`, reason && `· ${reason}`].filter(Boolean).join(" ");
+      break;
+    }
+    case 107: {
+      kind = "info";
+      text = ["Red card", booked && `— ${booked}`, reason && `· ${reason}`].filter(Boolean).join(" ");
+      break;
+    }
+    case 108: {
+      kind = "info";
+      text = ["Second yellow", booked && `— ${booked}`, reason && `· ${reason}`].filter(Boolean).join(" ");
+      break;
+    }
+    case 10001:
+      kind = "status";
+      text = "Kick-off";
+      break;
+    case 10002:
+      kind = "status";
+      text = "Second half";
+      break;
+    case 10003:
+      kind = "status";
+      text = score ? `Half-time · ${score}` : "Half-time";
+      break;
+    case 10005:
+      kind = "status";
+      text = score ? `Full time · ${score}` : "Full time";
+      break;
+    default:
+      return null;
+  }
+
+  const minuteLabel = minute ? (minute.includes("'") ? minute : `${minute}'`) : undefined;
+  return {
+    id: `ev-${type}-${minute}-${index}-${side}-${scorer}-${booked}-${subIn}-${score}`,
+    ...(minuteLabel ? { minute: minuteLabel } : {}),
+    text,
+    kind,
+  };
+}
+
 export function parseMatchEvents(buffer: Buffer): MatchEvent[] {
   const first = parseApiEnvelope(buffer).payload[0] ?? buffer;
   const fields = readFields(first);
-  const events: MatchEvent[] = [];
+  const chronological: MatchEvent[] = [];
   let i = 0;
   for (const chunk of fields.get(1) ?? []) {
-    const f = readFields(chunk);
-    const type = readVarintValue(f.get(3)?.[0]) ?? 0;
-    const minute = utf8(f.get(4)?.[0]) || String(readVarintValue(f.get(4)?.[0]) ?? "");
-    const score = utf8(f.get(5)?.[0]);
-    const reason = utf8(f.get(6)?.[0]);
-    const player = utf8(f.get(8)?.[0]) || utf8(f.get(9)?.[0]);
-    const text = [player, reason, score].filter(Boolean).join(" — ") || `Event ${type}`;
-    const kind: MatchEvent["kind"] = type === 1 || /goal/i.test(text) ? "goal" : type >= 10 ? "status" : "info";
-    events.push({
-      id: `ev-${i++}`,
-      ...(minute ? { minute: minute.includes("'") ? minute : `${minute}'` } : {}),
-      text,
-      kind,
-    });
+    const row = parseDataMatchEvent(chunk, i++);
+    if (row) chronological.push(row);
   }
-  return events.slice(0, 40);
+  return chronological.reverse().slice(0, 60);
 }
