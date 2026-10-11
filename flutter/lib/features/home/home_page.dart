@@ -2072,18 +2072,19 @@ class _StatsTab extends StatelessWidget {
                     Expanded(
                       child: Text(
                         homeName,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: FctvColors.accent),
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, height: 1.2, color: FctvColors.accent),
                       ),
                     ),
+                    const SizedBox(width: 12),
                     Expanded(
                       child: Text(
                         awayName,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: _awayColor),
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15, height: 1.2, color: _awayColor),
                       ),
                     ),
                   ],
