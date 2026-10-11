@@ -10,9 +10,12 @@ external JSPromise<JSAny?> _fctvAttachHls(web.HTMLVideoElement video, String url
 @JS('fctvDestroyHls')
 external void _fctvDestroyHls();
 
+@JS('fctvMountPlayer')
+external web.HTMLVideoElement _fctvMountPlayer(web.HTMLElement root, JSAny? opts);
+
 web.HTMLVideoElement? _activeVideo;
 
-/// Native HTML &lt;video&gt; + hls.js — avoids media_kit's CanvasKit black surface.
+/// Native HTML player shell (video + overlay controls) inside one platform view.
 class WebHlsSurface extends StatefulWidget {
   const WebHlsSurface({
     super.key,
@@ -37,20 +40,11 @@ class _WebHlsSurfaceState extends State<WebHlsSurface> {
   web.HTMLVideoElement? _video;
   String? _attachedUrl;
 
-  void _bindVideo(web.HTMLVideoElement video) {
+  void _bindRoot(web.HTMLElement root) {
+    final video = _fctvMountPlayer(root, null);
+    video.muted = widget.muted;
     _video = video;
     _activeVideo = video;
-    video.autoplay = true;
-    video.muted = widget.muted;
-    video.controls = false;
-    video.setAttribute('playsinline', 'true');
-    video.setAttribute('webkit-playsinline', 'true');
-    video.style
-      ..setProperty('width', '100%')
-      ..setProperty('height', '100%')
-      ..setProperty('object-fit', 'contain')
-      ..setProperty('background', '#000')
-      ..setProperty('display', 'block');
     video.addEventListener(
       'playing',
       (web.Event _) {
@@ -110,13 +104,12 @@ class _WebHlsSurfaceState extends State<WebHlsSurface> {
 
   @override
   Widget build(BuildContext context) {
-    // isVisible: true keeps the platform view painted (not DOM-only).
     return HtmlElementView.fromTagName(
-      key: ValueKey('fctv-video-${widget.viewId}'),
-      tagName: 'video',
+      key: ValueKey('fctv-player-${widget.viewId}'),
+      tagName: 'div',
       isVisible: true,
       onElementCreated: (Object element) {
-        _bindVideo(element as web.HTMLVideoElement);
+        _bindRoot(element as web.HTMLElement);
       },
     );
   }

@@ -424,58 +424,22 @@ class StreamPlayerState extends State<StreamPlayer> {
     final waiting = _waitingForStream || (!hasUrl && widget.resolving);
     final idleEmpty = !hasUrl && !widget.resolving;
 
-    // Web: never paint Flutter widgets on top of HtmlElementView — CanvasKit
-    // replaces the covered platform-view region with black (audio still plays).
+    // Web: controls live inside the HTML player shell (auto-hide). Do not stack
+    // Flutter widgets over HtmlElementView — that blanks the video on CanvasKit.
     if (kIsWeb) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          AspectRatio(
-            aspectRatio: 16 / 9,
-            child: ColoredBox(
-              color: Colors.black,
-              child: idleEmpty
-                  ? const Center(
-                      child: Text(
-                        'Select a server',
-                        style: TextStyle(color: FctvColors.textSecondary),
-                      ),
-                    )
-                  : video,
-            ),
-          ),
-          if (!idleEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Row(
-                children: [
-                  if (waiting)
-                    const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: FctvColors.accent),
-                    )
-                  else
-                    IconButton(
-                      onPressed: togglePlay,
-                      icon: Icon(_playing ? Icons.pause : Icons.play_arrow, color: Colors.white),
-                    ),
-                  const Spacer(),
-                  _PlayerActionBar(
-                    isFullscreen: widget.isFullscreen,
-                    isMuted: _muted,
-                    isPlaying: _playing,
-                    onToggleMute: toggleMute,
-                    onTogglePiP: (kIsWeb || widget.onTogglePiP != null)
-                        ? () => unawaited(togglePictureInPicture())
-                        : null,
-                    onToggleFullscreen: widget.onToggleFullscreen,
-                    onAirPlay: widget.onAirPlay ?? () => _defaultAirPlay(context),
+      return AspectRatio(
+        aspectRatio: 16 / 9,
+        child: ColoredBox(
+          color: Colors.black,
+          child: idleEmpty
+              ? const Center(
+                  child: Text(
+                    'Select a server',
+                    style: TextStyle(color: FctvColors.textSecondary),
                   ),
-                ],
-              ),
-            ),
-        ],
+                )
+              : video,
+        ),
       );
     }
 

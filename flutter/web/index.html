@@ -309,18 +309,19 @@
         }
       };
       window.fctvEnterFullscreen = function (video) {
-        var el = video || document.documentElement;
+        var root = (video && video.closest) ? video.closest('[data-fctv-player]') : null;
+        var el = root || video || document.documentElement;
         try {
           if (el.requestFullscreen) return el.requestFullscreen();
           if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
-          if (el.webkitEnterFullscreen) {
-            el.webkitEnterFullscreen();
+          if (video && video.webkitEnterFullscreen) {
+            video.webkitEnterFullscreen();
             return Promise.resolve();
           }
         } catch (e) {}
-        var root = document.documentElement;
-        if (root.requestFullscreen) return root.requestFullscreen();
-        if (root.webkitRequestFullscreen) return root.webkitRequestFullscreen();
+        var docEl = document.documentElement;
+        if (docEl.requestFullscreen) return docEl.requestFullscreen();
+        if (docEl.webkitRequestFullscreen) return docEl.webkitRequestFullscreen();
         return Promise.reject(new Error('fullscreen unsupported'));
       };
       window.fctvExitFullscreen = function () {
@@ -410,6 +411,165 @@
         }
         video.src = url;
         return tryPlay();
+      };
+
+      /** Overlay controls inside the platform-view (keeps CanvasKit from blanking <video>). */
+      window.fctvMountPlayer = function (root, opts) {
+        opts = opts || {};
+        root.setAttribute('data-fctv-player', '1');
+        root.style.cssText =
+          'position:relative;width:100%;height:100%;background:#000;overflow:hidden;user-select:none;';
+        root.innerHTML = '';
+
+        var video = document.createElement('video');
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.controls = false;
+        video.autoplay = true;
+        video.muted = opts.muted !== false;
+        video.style.cssText =
+          'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block;';
+
+        var chrome = document.createElement('div');
+        chrome.style.cssText =
+          'position:absolute;inset:0;display:flex;flex-direction:column;opacity:1;transition:opacity .22s ease;z-index:2;';
+
+        var dim = document.createElement('div');
+        dim.style.cssText =
+          'position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.25) 0%,transparent 28%,transparent 55%,rgba(0,0,0,.55) 100%);pointer-events:none;';
+
+        var center = document.createElement('button');
+        center.type = 'button';
+        center.setAttribute('aria-label', 'Play');
+        center.style.cssText =
+          'margin:auto;width:64px;height:64px;border:0;border-radius:50%;background:rgba(0,0,0,.45);color:#fff;font-size:28px;cursor:pointer;display:flex;align-items:center;justify-content:center;pointer-events:auto;';
+        center.textContent = '▶';
+
+        var bar = document.createElement('div');
+        bar.style.cssText =
+          'position:absolute;left:10px;right:10px;bottom:10px;display:flex;align-items:center;justify-content:flex-end;gap:4px;pointer-events:auto;';
+
+        function mkBtn(label, aria) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.setAttribute('aria-label', aria);
+          b.textContent = label;
+          b.style.cssText =
+            'width:40px;height:40px;border:0;border-radius:20px;background:rgba(0,0,0,.55);color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+          return b;
+        }
+
+        var muteBtn = mkBtn('🔇', 'Mute');
+        var pipBtn = mkBtn('⧉', 'Picture in picture');
+        var fsBtn = mkBtn('⛶', 'Fullscreen');
+        bar.appendChild(muteBtn);
+        bar.appendChild(pipBtn);
+        bar.appendChild(fsBtn);
+
+        var spinner = document.createElement('div');
+        spinner.style.cssText =
+          'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;';
+        spinner.innerHTML =
+          '<div style="width:36px;height:36px;border:3px solid rgba(255,255,255,.25);border-top-color:#ffae01;border-radius:50%;animation:fctvspin .8s linear infinite"></div>';
+        if (!document.getElementById('fctv-spin-style')) {
+          var st = document.createElement('style');
+          st.id = 'fctv-spin-style';
+          st.textContent = '@keyframes fctvspin{to{transform:rotate(360deg)}}';
+          document.head.appendChild(st);
+        }
+
+        chrome.appendChild(dim);
+        chrome.appendChild(center);
+        chrome.appendChild(bar);
+        root.appendChild(video);
+        root.appendChild(chrome);
+        root.appendChild(spinner);
+
+        var hideTimer = null;
+        var chromeVisible = true;
+        function setChrome(vis) {
+          chromeVisible = vis;
+          chrome.style.opacity = vis ? '1' : '0';
+          chrome.style.pointerEvents = vis ? 'auto' : 'none';
+          bar.style.pointerEvents = vis ? 'auto' : 'none';
+          center.style.pointerEvents = vis ? 'auto' : 'none';
+          center.style.display = vis || video.paused ? 'flex' : 'none';
+        }
+        function bumpHide() {
+          clearTimeout(hideTimer);
+          setChrome(true);
+          if (!video.paused) {
+            hideTimer = setTimeout(function () { setChrome(false); }, 3200);
+          }
+        }
+        function syncUi() {
+          center.textContent = video.paused ? '▶' : '❚❚';
+          muteBtn.textContent = video.muted || video.volume === 0 ? '🔇' : '🔊';
+          if (!video.paused && video.readyState >= 2) spinner.style.display = 'none';
+          else if (video.readyState < 2) spinner.style.display = 'flex';
+          center.style.display = chromeVisible || video.paused ? 'flex' : 'none';
+        }
+
+        center.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (video.paused) video.play().catch(function () {});
+          else video.pause();
+          bumpHide();
+          syncUi();
+        });
+        muteBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          video.muted = !video.muted;
+          if (!video.muted) video.volume = 1;
+          bumpHide();
+          syncUi();
+        });
+        pipBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          window.fctvTogglePiP(video).catch(function () {});
+          bumpHide();
+        });
+        fsBtn.addEventListener('click', function (e) {
+          e.stopPropagation();
+          if (window.fctvIsFullscreen()) window.fctvExitFullscreen();
+          else window.fctvEnterFullscreen(video);
+          bumpHide();
+        });
+
+        root.addEventListener('pointermove', bumpHide);
+        root.addEventListener('pointerdown', function (e) {
+          if (e.target.closest('button')) return;
+          if (!chromeVisible) {
+            bumpHide();
+            return;
+          }
+          // Tap empty area toggles play when chrome visible
+          if (video.paused) video.play().catch(function () {});
+          else bumpHide();
+        });
+
+        video.addEventListener('playing', function () {
+          spinner.style.display = 'none';
+          bumpHide();
+          syncUi();
+        });
+        video.addEventListener('pause', function () {
+          clearTimeout(hideTimer);
+          setChrome(true);
+          syncUi();
+        });
+        video.addEventListener('volumechange', syncUi);
+        video.addEventListener('waiting', function () { spinner.style.display = 'flex'; });
+        video.addEventListener('canplay', function () {
+          if (!video.paused) spinner.style.display = 'none';
+          syncUi();
+        });
+        document.addEventListener('fullscreenchange', syncUi);
+        document.addEventListener('webkitfullscreenchange', syncUi);
+
+        syncUi();
+        bumpHide();
+        return video;
       };
     })();
   </script>
