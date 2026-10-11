@@ -1,15 +1,17 @@
-# FCTV33 monorepo
+# anis-fctv (FCTV33)
 
-| Path | Role |
-|------|------|
-| [`ios/`](ios/) | **Native SwiftUI app — do not mix with Flutter** |
-| [`ios-flutter/`](ios-flutter/) | Flutter iOS runner (Xcode project for the Flutter client) |
-| [`flutter/`](flutter/) | Shared Flutter UI (web, Android, Android TV, ios-flutter) |
-| [`api/`](api/) | Node API (live / detail / resolve / HLS proxy) for all Flutter targets |
-| [`fctv33-stream-resolver/`](fctv33-stream-resolver/) | Historical Node prototype (reference) |
-| [`web/`](web/) | Abandoned Next.js scaffold (optional cleanup) |
+Remote: **https://github.com/akedidi/anis-fctv**
 
-`flutter/ios` is a symlink → `../ios-flutter` so the native `ios/` folder stays untouched and unambiguous.
+## Où est mon app ?
+
+| Dossier | C’est quoi | Comment l’ouvrir |
+|---------|------------|------------------|
+| **`ios/`** | Ton app iOS **native** (SwiftUI) — celle qui marchait déjà | Xcode → `ios/FCTV.xcworkspace` |
+| **`flutter/`** | Nouvelle app multiplateforme (web + Android + TV) | `cd flutter && flutter run` |
+| **`ios-flutter/`** | Runner iOS **Flutter** (pas le natif) | généré pour Flutter ; ne pas confondre avec `ios/` |
+| **`api/`** | Backend live / resolve / HLS pour Flutter | `cd api && npm run dev` → http://127.0.0.1:3000 |
+
+L’app iOS native n’a **pas été effacée** : elle est dans `ios/` (ex-dossier `FCTV/`).
 
 ## API (local)
 
