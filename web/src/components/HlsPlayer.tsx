@@ -125,13 +125,12 @@ export function HlsPlayer({
       <video
         ref={videoRef}
         playsInline
-        // @ts-expect-error Safari AirPlay
-        x-webkit-airplay="allow"
         controls={false}
         muted={muted}
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
         onClick={() => setShowControls((v) => !v)}
+        {...{ "x-webkit-airplay": "allow" }}
       />
       {!src && (
         <div className="placeholder">
