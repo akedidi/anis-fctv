@@ -398,27 +398,14 @@ class StreamPlayerState extends State<StreamPlayer> {
     final video = _videoSurface();
 
     if (!widget.expanded) {
+      // Mini / PiP: no overlays on web platform views.
       return _maybeClip(
-        8,
+        kIsWeb ? 0 : 8,
         AspectRatio(
           aspectRatio: 16 / 9,
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              const ColoredBox(color: Colors.black),
-              video,
-              if (_waitingForStream)
-                const ColoredBox(
-                  color: Colors.black54,
-                  child: Center(
-                    child: SizedBox(
-                      width: 22,
-                      height: 22,
-                      child: CircularProgressIndicator(strokeWidth: 2.2, color: FctvColors.accent),
-                    ),
-                  ),
-                ),
-            ],
+          child: ColoredBox(
+            color: Colors.black,
+            child: video,
           ),
         ),
       );
@@ -427,6 +414,59 @@ class StreamPlayerState extends State<StreamPlayer> {
     final hasUrl = widget.url != null && widget.url!.isNotEmpty;
     final waiting = _waitingForStream || (!hasUrl && widget.resolving);
     final idleEmpty = !hasUrl && !widget.resolving;
+
+    // Web: never paint Flutter widgets on top of HtmlElementView — CanvasKit
+    // replaces the covered platform-view region with black (audio still plays).
+    if (kIsWeb) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AspectRatio(
+            aspectRatio: 16 / 9,
+            child: ColoredBox(
+              color: Colors.black,
+              child: idleEmpty
+                  ? const Center(
+                      child: Text(
+                        'Select a server',
+                        style: TextStyle(color: FctvColors.textSecondary),
+                      ),
+                    )
+                  : video,
+            ),
+          ),
+          if (!idleEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Row(
+                children: [
+                  if (waiting)
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: FctvColors.accent),
+                    )
+                  else
+                    IconButton(
+                      onPressed: togglePlay,
+                      icon: Icon(_playing ? Icons.pause : Icons.play_arrow, color: Colors.white),
+                    ),
+                  const Spacer(),
+                  _PlayerActionBar(
+                    isFullscreen: widget.isFullscreen,
+                    isMuted: _muted,
+                    isPlaying: _playing,
+                    onToggleMute: toggleMute,
+                    onTogglePiP: widget.onTogglePiP,
+                    onToggleFullscreen: widget.onToggleFullscreen,
+                    onAirPlay: widget.onAirPlay ?? () => _defaultAirPlay(context),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      );
+    }
 
     return AspectRatio(
       aspectRatio: 16 / 9,
