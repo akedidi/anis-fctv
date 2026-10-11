@@ -6,10 +6,11 @@ import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
 
 import '../../core/theme.dart';
+import 'web_hls_surface_stub.dart'
+    if (dart.library.html) 'web_hls_surface_web.dart';
 
-/// Stable player surface — keep one [State] across layout changes (fullscreen / panel),
-/// but recreate the underlying [Player] on each URL switch so HLS sessions tear down
-/// cleanly (same idea as destroying hls.js before loadSource).
+/// Stable player surface — keep one [State] across layout changes (fullscreen / panel).
+/// Web uses a native HTML &lt;video&gt; + hls.js (media_kit's CanvasKit surface stays black).
 class StreamPlayer extends StatefulWidget {
   const StreamPlayer({
     super.key,
@@ -41,25 +42,22 @@ class StreamPlayer extends StatefulWidget {
 }
 
 class StreamPlayerState extends State<StreamPlayer> {
-  Player _player = Player();
-  late VideoController _controller = VideoController(_player);
+  Player? _player;
+  VideoController? _controller;
   String? _loadedUrl;
   int _loadedToken = -1;
   int _openGen = 0;
-  bool _muted = false;
-  bool _playing = true;
+  int _webViewId = 0;
+  bool _muted = true;
+  bool _playing = false;
   bool _opening = false;
   bool _buffering = false;
-  /// True from resolve/open until media_kit reports playing — keeps loader, hides play button.
   bool _awaitingPlayback = false;
-  /// Center play + dimmer only — bottom-right action cluster stays visible.
   bool _showCenterChrome = false;
   Timer? _hideTimer;
   Timer? _playbackWatchdog;
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
-
-  Player get player => _player;
 
   bool get _waitingForStream =>
       widget.resolving ||
@@ -73,7 +71,13 @@ class StreamPlayerState extends State<StreamPlayer> {
   @override
   void initState() {
     super.initState();
-    _bindPlayerStreams();
+    if (!kIsWeb) {
+      _player = Player();
+      _controller = VideoController(_player!);
+      _bindPlayerStreams();
+    } else {
+      _muted = true;
+    }
     if (widget.url != null && widget.url!.isNotEmpty) {
       _awaitingPlayback = true;
     }
@@ -81,9 +85,11 @@ class StreamPlayerState extends State<StreamPlayer> {
   }
 
   void _bindPlayerStreams() {
+    final player = _player;
+    if (player == null) return;
     _playingSub?.cancel();
     _bufferingSub?.cancel();
-    _playingSub = _player.stream.playing.listen((playing) {
+    _playingSub = player.stream.playing.listen((playing) {
       if (!mounted) return;
       setState(() {
         _playing = playing;
@@ -94,14 +100,14 @@ class StreamPlayerState extends State<StreamPlayer> {
       });
       if (playing) _bumpAutoHide();
     });
-    _bufferingSub = _player.stream.buffering.listen((buffering) {
+    _bufferingSub = player.stream.buffering.listen((buffering) {
       if (!mounted) return;
       setState(() => _buffering = buffering);
     });
   }
 
-  /// Tear down the previous media_kit / web HLS session completely.
   Future<void> _recreatePlayer() async {
+    if (kIsWeb) return;
     _playbackWatchdog?.cancel();
     await _playingSub?.cancel();
     await _bufferingSub?.cancel();
@@ -109,16 +115,16 @@ class StreamPlayerState extends State<StreamPlayer> {
     _bufferingSub = null;
     final old = _player;
     _player = Player();
-    _controller = VideoController(_player);
+    _controller = VideoController(_player!);
     _bindPlayerStreams();
     if (_muted) {
-      await _player.setVolume(0);
+      await _player!.setVolume(0);
     }
     try {
-      await old.stop();
+      await old?.stop();
     } catch (_) {}
     try {
-      await old.dispose();
+      await old?.dispose();
     } catch (_) {}
   }
 
@@ -134,7 +140,6 @@ class StreamPlayerState extends State<StreamPlayer> {
         force: tokenChanged || urlChanged,
       );
     } else if (!oldWidget.resolving && widget.resolving) {
-      // Server switch started — stay on loader, never flash the play button.
       setState(() {
         _awaitingPlayback = true;
         _showCenterChrome = false;
@@ -163,9 +168,13 @@ class StreamPlayerState extends State<StreamPlayer> {
         _loadedUrl = null;
         _loadedToken = -1;
       }
-      try {
-        await _player.stop();
-      } catch (_) {}
+      if (kIsWeb) {
+        // keep surface; empty url handled by WebHlsSurface
+      } else {
+        try {
+          await _player?.stop();
+        } catch (_) {}
+      }
       return;
     }
     if (!force && url == _loadedUrl && token == _loadedToken) {
@@ -185,44 +194,54 @@ class StreamPlayerState extends State<StreamPlayer> {
         _playing = false;
       });
     }
-    // Recreate so the previous HLS session cannot stick (web media_kit / hls.js).
+
+    if (kIsWeb) {
+      _loadedUrl = null;
+      _loadedToken = -1;
+      _webViewId++;
+      if (mounted) setState(() {});
+      // Surface attaches + plays; mark loaded after a beat so overlays clear on playing.
+      await Future<void>.delayed(const Duration(milliseconds: 80));
+      if (!mounted || gen != _openGen) return;
+      _loadedUrl = url;
+      _loadedToken = token;
+      _playbackWatchdog = Timer(const Duration(seconds: 3), () {
+        if (!mounted || gen != _openGen) return;
+        if (_playing) return;
+        setState(() {
+          _awaitingPlayback = false;
+          _showCenterChrome = true;
+          _muted = true;
+        });
+      });
+      if (mounted) setState(() => _opening = false);
+      return;
+    }
+
     final hadMedia = _loadedUrl != null;
     _loadedUrl = null;
     _loadedToken = -1;
     if (hadMedia || force) {
       await _recreatePlayer();
       if (!mounted || gen != _openGen) return;
-      setState(() {}); // pick up new VideoController
+      setState(() {});
     } else {
       try {
-        await _player.stop();
+        await _player?.stop();
       } catch (_) {}
       if (!mounted || gen != _openGen) return;
     }
     try {
-      // Web: async resolve loses the user gesture. Browsers only allow *muted* autoplay —
-      // unmuting immediately after open often leaves the <video> paused on a black frame
-      // (Westerlo / slower HLS) while the player still looks "ready".
-      if (kIsWeb) {
-        _muted = true;
-        await _player.setVolume(0);
-        if (mounted) setState(() {});
-      }
-      await _player.open(Media(url), play: true);
+      await _player!.setVolume(_muted ? 0 : 100);
+      await _player!.open(Media(url), play: true);
       if (!mounted || gen != _openGen) return;
       _loadedUrl = url;
       _loadedToken = token;
-      await _player.play();
-      if (!mounted || gen != _openGen) return;
-      if (kIsWeb) {
-        // Reinforce muted autoplay; never auto-unmute on web.
-        await _player.setVolume(0);
-        await _player.play();
-      }
+      await _player!.play();
       _playbackWatchdog = Timer(const Duration(seconds: 2), () {
         if (!mounted || gen != _openGen) return;
         if (_playing) return;
-        unawaited(_recoverWebAutoplay(gen));
+        unawaited(_recoverNativeAutoplay(gen));
       });
     } catch (_) {
       if (!mounted || gen != _openGen) return;
@@ -239,13 +258,12 @@ class StreamPlayerState extends State<StreamPlayer> {
     }
   }
 
-  /// Muted retry then surface a play control if the HTML video stayed paused.
-  Future<void> _recoverWebAutoplay(int gen) async {
-    if (!kIsWeb || !mounted || gen != _openGen) return;
+  Future<void> _recoverNativeAutoplay(int gen) async {
+    if (!mounted || gen != _openGen) return;
     try {
       _muted = true;
-      await _player.setVolume(0);
-      await _player.play();
+      await _player?.setVolume(0);
+      await _player?.play();
     } catch (_) {}
     await Future<void>.delayed(const Duration(milliseconds: 350));
     if (!mounted || gen != _openGen) return;
@@ -260,36 +278,43 @@ class StreamPlayerState extends State<StreamPlayer> {
 
   Future<void> toggleMute() async {
     final next = !_muted;
-    await _player.setVolume(next ? 0 : 100);
+    if (kIsWeb) {
+      await webHlsSetMuted(next);
+      if (!mounted) return;
+      setState(() => _muted = next);
+      _bumpAutoHide();
+      return;
+    }
+    await _player?.setVolume(next ? 0 : 100);
     if (!mounted) return;
     setState(() => _muted = next);
-    // Unmute can pause under autoplay policies — keep playback alive muted if needed.
-    if (kIsWeb && !next) {
+    if (!next) {
       try {
-        await _player.play();
+        await _player?.play();
       } catch (_) {
-        await _player.setVolume(0);
-        await _player.play();
+        await _player?.setVolume(0);
+        await _player?.play();
         if (mounted) setState(() => _muted = true);
       }
     }
+    _bumpAutoHide();
   }
 
   Future<void> togglePlay() async {
+    if (kIsWeb) {
+      await webHlsTogglePlay();
+      if (!mounted) return;
+      setState(() {
+        _awaitingPlayback = false;
+        _showCenterChrome = true;
+      });
+      _bumpAutoHide();
+      return;
+    }
     if (_playing) {
-      await _player.pause();
+      await _player?.pause();
     } else {
-      if (kIsWeb && !_muted) {
-        try {
-          await _player.play();
-        } catch (_) {
-          _muted = true;
-          await _player.setVolume(0);
-          await _player.play();
-        }
-      } else {
-        await _player.play();
-      }
+      await _player?.play();
     }
     if (!mounted) return;
     setState(() {
@@ -300,7 +325,6 @@ class StreamPlayerState extends State<StreamPlayer> {
   }
 
   void _onVideoTap() {
-    // While waiting after a loaded URL, a tap should try play — not be ignored.
     if (_awaitingPlayback && _loadedUrl != null && !_playing) {
       unawaited(togglePlay());
       return;
@@ -325,11 +349,10 @@ class StreamPlayerState extends State<StreamPlayer> {
     _playbackWatchdog?.cancel();
     _playingSub?.cancel();
     _bufferingSub?.cancel();
-    _player.dispose();
+    _player?.dispose();
     super.dispose();
   }
 
-  /// Flutter web + Clip* hide HtmlElementView (&lt;video&gt;) while audio still plays.
   Widget _maybeClip(double radius, Widget child) {
     if (kIsWeb || radius <= 0) return child;
     return ClipRRect(
@@ -338,15 +361,41 @@ class StreamPlayerState extends State<StreamPlayer> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final video = Video(
-      controller: _controller,
+  Widget _videoSurface() {
+    if (kIsWeb) {
+      return WebHlsSurface(
+        key: ValueKey('web-hls-$_webViewId-${widget.loadToken}'),
+        url: widget.url,
+        viewId: _webViewId,
+        muted: _muted,
+        onPlaying: (playing) {
+          if (!mounted) return;
+          setState(() {
+            _playing = playing;
+            if (playing) {
+              _awaitingPlayback = false;
+              _playbackWatchdog?.cancel();
+            }
+          });
+          if (playing) _bumpAutoHide();
+        },
+        onMuted: (muted) {
+          if (!mounted) return;
+          setState(() => _muted = muted);
+        },
+      );
+    }
+    return Video(
+      controller: _controller!,
       controls: NoVideoControls,
       fit: BoxFit.contain,
-      // Transparent so a stuck HtmlElementView isn't painted over by fill.
       fill: Colors.transparent,
     );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final video = _videoSurface();
 
     if (!widget.expanded) {
       return _maybeClip(
@@ -487,9 +536,9 @@ class _PlayerActionBar extends StatelessWidget {
     required this.isMuted,
     required this.isPlaying,
     required this.onToggleMute,
-    required this.onTogglePiP,
-    required this.onToggleFullscreen,
-    required this.onAirPlay,
+    this.onTogglePiP,
+    this.onToggleFullscreen,
+    this.onAirPlay,
   });
 
   final bool isFullscreen;
@@ -498,77 +547,51 @@ class _PlayerActionBar extends StatelessWidget {
   final VoidCallback onToggleMute;
   final VoidCallback? onTogglePiP;
   final VoidCallback? onToggleFullscreen;
-  final VoidCallback onAirPlay;
+  final VoidCallback? onAirPlay;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      elevation: 2,
       color: Colors.black.withValues(alpha: 0.55),
-      borderRadius: BorderRadius.circular(999),
+      borderRadius: BorderRadius.circular(22),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _CtrlBtn(
-              icon: isMuted ? Icons.volume_off_rounded : Icons.volume_up_rounded,
-              tooltip: isMuted ? 'Unmute' : 'Mute',
-              onTap: onToggleMute,
-            ),
-            _CtrlBtn(
-              icon: Icons.airplay_rounded,
-              tooltip: 'AirPlay / Cast',
-              onTap: onAirPlay,
+            _iconBtn(
+              icon: isMuted ? Icons.volume_off : Icons.volume_up,
+              onPressed: onToggleMute,
+              enabled: true,
             ),
             if (onTogglePiP != null)
-              _CtrlBtn(
-                icon: Icons.picture_in_picture_alt_rounded,
-                tooltip: 'Picture in Picture',
-                enabled: isPlaying,
-                onTap: onTogglePiP,
+              _iconBtn(icon: Icons.picture_in_picture_alt, onPressed: onTogglePiP!, enabled: true),
+            if (onAirPlay != null)
+              _iconBtn(icon: Icons.airplay, onPressed: onAirPlay!, enabled: true),
+            if (onToggleFullscreen != null)
+              _iconBtn(
+                icon: isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+                onPressed: onToggleFullscreen!,
+                enabled: true,
               ),
-            _CtrlBtn(
-              icon: isFullscreen ? Icons.fullscreen_exit_rounded : Icons.fullscreen_rounded,
-              tooltip: isFullscreen ? 'Exit fullscreen' : 'Fullscreen',
-              enabled: onToggleFullscreen != null,
-              onTap: onToggleFullscreen,
-            ),
           ],
         ),
       ),
     );
   }
-}
 
-class _CtrlBtn extends StatelessWidget {
-  const _CtrlBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-    this.enabled = true,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onTap;
-  final bool enabled;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(999),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Icon(
-            icon,
-            size: 22,
-            color: Colors.white.withValues(alpha: enabled ? 1 : 0.35),
-          ),
-        ),
+  Widget _iconBtn({
+    required IconData icon,
+    required VoidCallback onPressed,
+    required bool enabled,
+  }) {
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      onPressed: enabled ? onPressed : null,
+      icon: Icon(
+        icon,
+        size: isFullscreen ? 22 : 20,
+        color: Colors.white.withValues(alpha: enabled ? 1 : 0.35),
       ),
     );
   }

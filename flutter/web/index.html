@@ -298,6 +298,63 @@
       });
     })();
   </script>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  <script>
+    (function () {
+      window._fctvHls = null;
+      window.fctvDestroyHls = function () {
+        if (window._fctvHls) {
+          try { window._fctvHls.destroy(); } catch (e) {}
+          window._fctvHls = null;
+        }
+      };
+      window.fctvAttachHls = function (video, url) {
+        window.fctvDestroyHls();
+        if (!video || !url) return Promise.resolve();
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.controls = false;
+        video.style.width = '100%';
+        video.style.height = '100%';
+        video.style.objectFit = 'contain';
+        video.style.background = '#000';
+        video.style.display = 'block';
+        video.muted = true;
+        function tryPlay() {
+          return video.play().catch(function () { return null; });
+        }
+        if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
+          video.src = url;
+          return tryPlay();
+        }
+        if (window.Hls && window.Hls.isSupported()) {
+          var hls = new window.Hls({
+            enableWorker: true,
+            lowLatencyMode: false,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 10,
+            maxBufferLength: 30,
+            backBufferLength: 30,
+          });
+          window._fctvHls = hls;
+          return new Promise(function (resolve) {
+            hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
+              resolve(tryPlay());
+            });
+            hls.on(window.Hls.Events.ERROR, function (_e, data) {
+              if (!data || !data.fatal) return;
+              if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+              else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+            });
+            hls.loadSource(url);
+            hls.attachMedia(video);
+          });
+        }
+        video.src = url;
+        return tryPlay();
+      };
+    })();
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
