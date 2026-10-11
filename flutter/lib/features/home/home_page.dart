@@ -2034,6 +2034,18 @@ class _StatsTab extends StatelessWidget {
   final String homeName;
   final String awayName;
 
+  static const _awayColor = Color(0xFF81C784);
+
+  MatchStatRow? get _possession {
+    for (final s in stats) {
+      final label = s.label.toLowerCase();
+      if (s.isPercent || label.contains('possession') || label.contains('poss')) {
+        return s;
+      }
+    }
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
     if (stats.isEmpty) {
@@ -2041,6 +2053,11 @@ class _StatsTab extends StatelessWidget {
         child: Text('Match stats unavailable for this event.', style: TextStyle(color: FctvColors.textTertiary)),
       );
     }
+    final possession = _possession;
+    final barStats = possession == null
+        ? stats
+        : stats.where((s) => s != possession).toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -2049,7 +2066,7 @@ class _StatsTab extends StatelessWidget {
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.only(bottom: 14),
                 child: Row(
                   children: [
                     Expanded(
@@ -2066,15 +2083,19 @@ class _StatsTab extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
-                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: Color(0xFF81C784)),
+                        style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: _awayColor),
                       ),
                     ),
                   ],
                 ),
               ),
-              for (var i = 0; i < stats.length; i++) ...[
+              if (possession != null) ...[
+                _PossessionDonut(stat: possession, awayColor: _awayColor),
+                const SizedBox(height: 18),
+              ],
+              for (var i = 0; i < barStats.length; i++) ...[
                 if (i > 0) const SizedBox(height: 14),
-                _StatRow(stat: stats[i]),
+                _StatRow(stat: barStats[i], awayColor: _awayColor),
               ],
             ],
           ),
@@ -2084,9 +2105,119 @@ class _StatsTab extends StatelessWidget {
   }
 }
 
-class _StatRow extends StatelessWidget {
-  const _StatRow({required this.stat});
+/// Circular possession chart (home / away) — numbers + visual like iOS detail.
+class _PossessionDonut extends StatelessWidget {
+  const _PossessionDonut({required this.stat, required this.awayColor});
   final MatchStatRow stat;
+  final Color awayColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final home = stat.home.toDouble().clamp(0, 100);
+    final away = stat.away.toDouble().clamp(0, 100);
+    final total = (home + away).clamp(1, double.infinity);
+    final homeSweep = (home / total) * 360;
+    return Column(
+      children: [
+        Text(
+          stat.label,
+          style: const TextStyle(
+            color: FctvColors.textSecondary,
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: 148,
+          height: 148,
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              CustomPaint(
+                size: const Size(148, 148),
+                painter: _DonutPainter(
+                  homeDegrees: homeSweep,
+                  homeColor: FctvColors.accent,
+                  awayColor: awayColor,
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${home.round()}% — ${away.round()}%',
+                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  ),
+                  const SizedBox(height: 2),
+                  const Text(
+                    'Possession',
+                    style: TextStyle(color: FctvColors.textTertiary, fontSize: 11, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DonutPainter extends CustomPainter {
+  _DonutPainter({
+    required this.homeDegrees,
+    required this.homeColor,
+    required this.awayColor,
+  });
+
+  final double homeDegrees;
+  final Color homeColor;
+  final Color awayColor;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final radius = size.shortestSide / 2;
+    final stroke = radius * 0.22;
+    final rect = Rect.fromCircle(center: center, radius: radius - stroke / 2);
+    final bg = Paint()
+      ..color = Colors.white.withValues(alpha: 0.08)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawArc(rect, 0, 2 * 3.141592653589793, false, bg);
+
+    final homePaint = Paint()
+      ..color = homeColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.butt;
+    final awayPaint = Paint()
+      ..color = awayColor
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = stroke
+      ..strokeCap = StrokeCap.butt;
+
+    // Start at 12 o'clock.
+    const start = -3.141592653589793 / 2;
+    final homeRad = homeDegrees * 3.141592653589793 / 180;
+    final awayRad = (360 - homeDegrees) * 3.141592653589793 / 180;
+    canvas.drawArc(rect, start, homeRad, false, homePaint);
+    canvas.drawArc(rect, start + homeRad, awayRad, false, awayPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _DonutPainter oldDelegate) =>
+      oldDelegate.homeDegrees != homeDegrees ||
+      oldDelegate.homeColor != homeColor ||
+      oldDelegate.awayColor != awayColor;
+}
+
+class _StatRow extends StatelessWidget {
+  const _StatRow({required this.stat, required this.awayColor});
+  final MatchStatRow stat;
+  final Color awayColor;
 
   @override
   Widget build(BuildContext context) {
@@ -2094,11 +2225,18 @@ class _StatRow extends StatelessWidget {
     final away = stat.away.toDouble();
     final total = (home + away).clamp(1, double.infinity);
     final homeRatio = home / total;
+    final awayRatio = away / total;
     return Column(
       children: [
         Row(
           children: [
-            Text(stat.format(stat.home), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+            SizedBox(
+              width: 44,
+              child: Text(
+                stat.format(stat.home),
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
             Expanded(
               child: Text(
                 stat.label,
@@ -2106,23 +2244,37 @@ class _StatRow extends StatelessWidget {
                 style: const TextStyle(color: FctvColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600),
               ),
             ),
-            Text(stat.format(stat.away), style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+            SizedBox(
+              width: 44,
+              child: Text(
+                stat.format(stat.away),
+                textAlign: TextAlign.end,
+                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+              ),
+            ),
           ],
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 7),
+        // Comparison chart bar (numbers above) — same layout as native iOS.
         ClipRRect(
-          borderRadius: BorderRadius.circular(3),
+          borderRadius: BorderRadius.circular(4),
           child: SizedBox(
-            height: 6,
-            child: Row(
+            height: 8,
+            child: Stack(
+              fit: StackFit.expand,
               children: [
-                Flexible(
-                  flex: (homeRatio * 1000).round().clamp(1, 1000),
-                  child: const ColoredBox(color: FctvColors.accent),
-                ),
-                Flexible(
-                  flex: ((1 - homeRatio) * 1000).round().clamp(1, 1000),
-                  child: const ColoredBox(color: Color(0xFF81C784)),
+                const ColoredBox(color: Color(0x1AFFFFFF)),
+                Row(
+                  children: [
+                    Flexible(
+                      flex: (homeRatio * 1000).round().clamp(1, 1000),
+                      child: const ColoredBox(color: FctvColors.accent),
+                    ),
+                    Flexible(
+                      flex: (awayRatio * 1000).round().clamp(1, 1000),
+                      child: ColoredBox(color: awayColor),
+                    ),
+                  ],
                 ),
               ],
             ),
