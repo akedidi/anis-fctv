@@ -1,5 +1,5 @@
 {
-  "buildCommand": "flutter config --enable-web && flutter pub get && flutter build web --release --dart-define=API_BASE=$API_BASE",
+  "buildCommand": "flutter config --enable-web && flutter pub get && flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
   "outputDirectory": "build/web",
   "framework": null,
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
