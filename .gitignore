@@ -1,0 +1,47 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+# Android dump
+com.fctv77.app-release-319-v3.0.319/
+
+# Native iOS
+ios/Pods/
+ios/build/
+ios/**/DerivedData/
+ios/**/*.xcuserstate
+ios/**/xcuserdata/
+ios/PlaybackProbe/.build/
+ios/.git/
+
+# Flutter iOS runner
+ios-flutter/Pods/
+ios-flutter/Flutter/Flutter.framework
+ios-flutter/Flutter/Flutter.podspec
+ios-flutter/Flutter/ephemeral/
+ios-flutter/**/xcuserdata/
+ios-flutter/**/*.xcuserstate
+
+# Flutter
+flutter/.dart_tool/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.packages
+flutter/build/
+flutter/.pub-cache/
+flutter/.pub/
+flutter/coverage/
+
+# API / Node
+api/node_modules/
+api/dist/
+api/.vercel
+fctv33-stream-resolver/node_modules/
+fctv33-stream-resolver/dist/
+fctv33-stream-resolver/.git/
+web/node_modules/
+web/.next/
+web/.git/
+*.log
+.vercel
