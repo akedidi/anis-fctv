@@ -61,9 +61,11 @@ Local worker:
 cd api && npm run dev:worker   # http://127.0.0.1:3000
 ```
 
-## Vercel (Flutter static only)
+## Vercel
 
-Set Vercel env `API_BASE=https://fctv33-api.kedidi-anis.workers.dev` on the Flutter project, or:
+Le projet Vercel connecté au repo est **`web`** (Next.js UI). L’API ne tourne **pas** sur Vercel — elle est sur Workers (ci-dessus). Le client web appelle directement `https://fctv33-api.kedidi-anis.workers.dev`.
+
+**Flutter** (projet Vercel séparé éventuel) :
 
 ```bash
 cd flutter

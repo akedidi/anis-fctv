@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { HlsPlayer } from "./HlsPlayer";
+import { apiUrl } from "@/lib/api";
 import {
   MORE_SPORTS,
   PRIMARY_SPORTS,
@@ -72,7 +73,9 @@ export function FctvApp() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/live?sportType=${sportType}&language=0`, { cache: "no-store" });
+      const res = await fetch(apiUrl(`/api/live?sportType=${sportType}&language=0`), {
+        cache: "no-store",
+      });
       const data = (await res.json()) as { matches?: LiveMatch[]; error?: string };
       if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
       setMatches(data.matches ?? []);
@@ -134,7 +137,7 @@ export function FctvApp() {
     setResolving(true);
     try {
       const res = await fetch(
-        `/api/match?matchId=${match.matchId}&sportType=${match.sportType}&language=0`,
+        apiUrl(`/api/match?matchId=${match.matchId}&sportType=${match.sportType}&language=0`),
         { cache: "no-store" },
       );
       const data = (await res.json()) as {
@@ -161,7 +164,7 @@ export function FctvApp() {
       setResolving(false);
     }
 
-    void fetch(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`, {
+    void fetch(apiUrl(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`), {
       cache: "no-store",
     })
       .then(async (r) => {
@@ -170,9 +173,9 @@ export function FctvApp() {
         setEvents(d.events ?? []);
       })
       .catch(() => {
-        // Keep any prior timeline rather than wiping to empty on a flaky Vercel cold start.
+        // Keep any prior timeline rather than wiping to empty on a flaky cold start.
       });
-    void fetch(`/api/match/lineup?matchId=${match.matchId}&sportType=${match.sportType}`)
+    void fetch(apiUrl(`/api/match/lineup?matchId=${match.matchId}&sportType=${match.sportType}`))
       .then((r) => r.json())
       .then((d: { lineup?: { home: LineupPlayer[]; away: LineupPlayer[] } }) =>
         setLineup(d.lineup ?? null),
@@ -207,7 +210,7 @@ export function FctvApp() {
         }
       })();
       if (localeRegion && /^[A-Z]{2}$/.test(localeRegion)) q.set("country", localeRegion);
-      const res = await fetch(`/api/resolve?${q}`, { cache: "no-store" });
+      const res = await fetch(apiUrl(`/api/resolve?${q}`), { cache: "no-store" });
       const data = (await res.json()) as { playableUrl?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "resolve failed");
       if (!data.playableUrl) throw new Error("missing playable url");
