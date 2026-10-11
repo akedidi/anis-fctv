@@ -48,7 +48,7 @@ class StreamPlayerState extends State<StreamPlayer> {
   int _loadedToken = -1;
   int _openGen = 0;
   int _webViewId = 0;
-  bool _muted = true;
+  bool _muted = false;
   bool _playing = false;
   bool _opening = false;
   bool _buffering = false;
@@ -75,8 +75,6 @@ class StreamPlayerState extends State<StreamPlayer> {
       _player = Player();
       _controller = VideoController(_player!);
       _bindPlayerStreams();
-    } else {
-      _muted = true;
     }
     if (widget.url != null && widget.url!.isNotEmpty) {
       _awaitingPlayback = true;
@@ -211,7 +209,6 @@ class StreamPlayerState extends State<StreamPlayer> {
         setState(() {
           _awaitingPlayback = false;
           _showCenterChrome = true;
-          _muted = true;
         });
       });
       if (mounted) setState(() => _opening = false);

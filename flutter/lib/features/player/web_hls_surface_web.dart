@@ -21,7 +21,7 @@ class WebHlsSurface extends StatefulWidget {
     super.key,
     required this.url,
     required this.viewId,
-    this.muted = true,
+    this.muted = false,
     this.onPlaying,
     this.onMuted,
   });

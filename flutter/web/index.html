@@ -378,9 +378,17 @@
         video.style.objectFit = 'contain';
         video.style.background = '#000';
         video.style.display = 'block';
-        video.muted = true;
+        video.muted = false;
+        video.volume = 1;
         function tryPlay() {
-          return video.play().catch(function () { return null; });
+          // Prefer audible playback; fall back to muted only if the browser blocks it.
+          video.muted = false;
+          video.volume = 1;
+          return video.play().catch(function () {
+            video.muted = true;
+            video._fctvPolicyMuted = true;
+            return video.play().catch(function () { return null; });
+          });
         }
         if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
           video.src = url;
@@ -426,7 +434,8 @@
         video.setAttribute('webkit-playsinline', 'true');
         video.controls = false;
         video.autoplay = true;
-        video.muted = opts.muted !== false;
+        video.muted = opts && opts.muted === true;
+        video.volume = 1;
         video.style.cssText =
           'position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;display:block;';
 
@@ -520,6 +529,7 @@
         muteBtn.addEventListener('click', function (e) {
           e.stopPropagation();
           video.muted = !video.muted;
+          video._fctvPolicyMuted = false;
           if (!video.muted) video.volume = 1;
           bumpHide();
           syncUi();
@@ -538,6 +548,14 @@
 
         root.addEventListener('pointermove', bumpHide);
         root.addEventListener('pointerdown', function (e) {
+          // Restore sound only if autoplay policy forced mute (not user mute).
+          if (video._fctvPolicyMuted && video.muted) {
+            video.muted = false;
+            video._fctvPolicyMuted = false;
+            video.volume = 1;
+            video.play().catch(function () {});
+            syncUi();
+          }
           if (e.target.closest('button')) return;
           if (!chromeVisible) {
             bumpHide();
