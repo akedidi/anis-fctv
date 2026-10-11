@@ -28,3 +28,11 @@ Future<void> webHlsTogglePlay() async {}
 Future<void> webHlsPlay() async {}
 
 Future<void> webHlsPause() async {}
+
+Future<bool> webEnterFullscreen() async => false;
+
+Future<void> webExitFullscreen() async {}
+
+bool webIsFullscreen() => false;
+
+VoidCallback webListenFullscreen(void Function(bool fullscreen) onChanged) => () {};

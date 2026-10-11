@@ -161,3 +161,46 @@ Future<void> webHlsPlay() async {
 Future<void> webHlsPause() async {
   _activeVideo?.pause();
 }
+
+@JS('fctvEnterFullscreen')
+external JSPromise<JSAny?> _fctvEnterFullscreen(web.HTMLVideoElement? video);
+
+@JS('fctvExitFullscreen')
+external JSPromise<JSAny?> _fctvExitFullscreen();
+
+@JS('fctvIsFullscreen')
+external bool _fctvIsFullscreen();
+
+Future<bool> webEnterFullscreen() async {
+  try {
+    await _fctvEnterFullscreen(_activeVideo).toDart;
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<void> webExitFullscreen() async {
+  try {
+    await _fctvExitFullscreen().toDart;
+  } catch (_) {}
+}
+
+bool webIsFullscreen() {
+  try {
+    return _fctvIsFullscreen();
+  } catch (_) {
+    return false;
+  }
+}
+
+VoidCallback webListenFullscreen(void Function(bool fullscreen) onChanged) {
+  void handler(web.Event _) => onChanged(webIsFullscreen());
+  final jsHandler = handler.toJS;
+  web.document.addEventListener('fullscreenchange', jsHandler);
+  web.document.addEventListener('webkitfullscreenchange', jsHandler);
+  return () {
+    web.document.removeEventListener('fullscreenchange', jsHandler);
+    web.document.removeEventListener('webkitfullscreenchange', jsHandler);
+  };
+}

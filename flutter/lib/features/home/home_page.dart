@@ -12,6 +12,8 @@ import '../../core/theme.dart';
 import '../../shared/widgets.dart';
 import '../../web_boot.dart' if (dart.library.io) '../../web_boot_stub.dart';
 import '../player/stream_player.dart';
+import '../player/web_hls_surface_stub.dart'
+    if (dart.library.html) '../player/web_hls_surface_web.dart';
 
 enum HomeFilter { all, live, finished }
 
@@ -145,6 +147,8 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _webFsUnsub?.call();
+    _webFsUnsub = null;
     _detailRefreshGen++;
     _searchCtrl.dispose();
     super.dispose();
@@ -675,12 +679,36 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  VoidCallback? _webFsUnsub;
+
   Future<void> _enterFullscreen() async {
     if (_playableUrl == null) return;
+
+    // Web: real browser / video Fullscreen API (not a Flutter route).
+    if (kIsWeb) {
+      if (webIsFullscreen()) {
+        await webExitFullscreen();
+        if (mounted) setState(() => _fullscreen = false);
+        return;
+      }
+      final ok = await webEnterFullscreen();
+      if (!mounted) return;
+      setState(() {
+        _fullscreen = ok;
+        if (ok) _mini = false;
+      });
+      _webFsUnsub ??= webListenFullscreen((fs) {
+        if (!mounted) return;
+        setState(() => _fullscreen = fs);
+      });
+      return;
+    }
+
     setState(() {
       _fullscreen = true;
       _mini = false;
     });
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
     await SystemChrome.setPreferredOrientations(const [
       DeviceOrientation.landscapeLeft,
       DeviceOrientation.landscapeRight,
@@ -698,6 +726,7 @@ class _HomePageState extends State<HomePage> {
         ),
       ),
     );
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     await SystemChrome.setPreferredOrientations(DeviceOrientation.values);
     if (mounted) {
       setState(() {
@@ -1558,10 +1587,13 @@ class _DetailPane extends StatelessWidget {
       loadToken: loadToken,
       title: playerTitle,
       resolving: resolving || detailLoading,
+      isFullscreen: fullscreen,
       onTogglePiP: onToggleMini,
       onToggleFullscreen: onFullscreen,
     );
-    final player = (!mini && !fullscreen)
+    // Web keeps the inline player mounted while browser fullscreen owns the <video>.
+    final hideInline = mini || (fullscreen && !kIsWeb);
+    final player = !hideInline
         ? (kIsWeb || compact
             ? playerWidget
             : ClipRRect(
@@ -2219,18 +2251,16 @@ class _FullscreenRoute extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.black,
-      body: SafeArea(
-        child: Center(
-          child: StreamPlayer(
-            key: playerKey,
-            url: url,
-            loadToken: loadToken,
-            title: title,
-            resolving: resolving,
-            isFullscreen: true,
-            onToggleFullscreen: () => Navigator.of(context).pop(false),
-            onTogglePiP: supportsMiniPlayer ? () => Navigator.of(context).pop(true) : null,
-          ),
+      body: SizedBox.expand(
+        child: StreamPlayer(
+          key: playerKey,
+          url: url,
+          loadToken: loadToken,
+          title: title,
+          resolving: resolving,
+          isFullscreen: true,
+          onToggleFullscreen: () => Navigator.of(context).pop(false),
+          onTogglePiP: supportsMiniPlayer ? () => Navigator.of(context).pop(true) : null,
         ),
       ),
     );

@@ -308,6 +308,36 @@
           window._fctvHls = null;
         }
       };
+      window.fctvEnterFullscreen = function (video) {
+        var el = video || document.documentElement;
+        try {
+          if (el.requestFullscreen) return el.requestFullscreen();
+          if (el.webkitRequestFullscreen) return el.webkitRequestFullscreen();
+          if (el.webkitEnterFullscreen) {
+            el.webkitEnterFullscreen();
+            return Promise.resolve();
+          }
+        } catch (e) {}
+        var root = document.documentElement;
+        if (root.requestFullscreen) return root.requestFullscreen();
+        if (root.webkitRequestFullscreen) return root.webkitRequestFullscreen();
+        return Promise.reject(new Error('fullscreen unsupported'));
+      };
+      window.fctvExitFullscreen = function () {
+        try {
+          if (document.exitFullscreen && document.fullscreenElement) {
+            return document.exitFullscreen();
+          }
+          if (document.webkitExitFullscreen && document.webkitFullscreenElement) {
+            return document.webkitExitFullscreen();
+          }
+        } catch (e) {}
+        return Promise.resolve();
+      };
+      window.fctvIsFullscreen = function () {
+        return !!(document.fullscreenElement || document.webkitFullscreenElement);
+      };
+
       window.fctvAttachHls = function (video, url) {
         window.fctvDestroyHls();
         if (!video || !url) return Promise.resolve();
