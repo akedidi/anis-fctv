@@ -276,6 +276,15 @@ class StreamPlayerState extends State<StreamPlayer> {
     }
   }
 
+  Future<void> togglePictureInPicture() async {
+    if (kIsWeb) {
+      await webTogglePictureInPicture();
+      if (mounted) setState(() {});
+      return;
+    }
+    widget.onTogglePiP?.call();
+  }
+
   Future<void> toggleMute() async {
     final next = !_muted;
     if (kIsWeb) {
@@ -457,7 +466,9 @@ class StreamPlayerState extends State<StreamPlayer> {
                     isMuted: _muted,
                     isPlaying: _playing,
                     onToggleMute: toggleMute,
-                    onTogglePiP: widget.onTogglePiP,
+                    onTogglePiP: (kIsWeb || widget.onTogglePiP != null)
+                        ? () => unawaited(togglePictureInPicture())
+                        : null,
                     onToggleFullscreen: widget.onToggleFullscreen,
                     onAirPlay: widget.onAirPlay ?? () => _defaultAirPlay(context),
                   ),
@@ -545,7 +556,9 @@ class StreamPlayerState extends State<StreamPlayer> {
                     isMuted: _muted,
                     isPlaying: _playing,
                     onToggleMute: toggleMute,
-                    onTogglePiP: widget.onTogglePiP,
+                    onTogglePiP: (kIsWeb || widget.onTogglePiP != null)
+                        ? () => unawaited(togglePictureInPicture())
+                        : null,
                     onToggleFullscreen: widget.onToggleFullscreen,
                     onAirPlay: widget.onAirPlay ?? () => _defaultAirPlay(context),
                   ),

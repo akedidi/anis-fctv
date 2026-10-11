@@ -204,3 +204,31 @@ VoidCallback webListenFullscreen(void Function(bool fullscreen) onChanged) {
     web.document.removeEventListener('webkitfullscreenchange', jsHandler);
   };
 }
+
+@JS('fctvTogglePiP')
+external JSPromise<JSAny?> _fctvTogglePiP(web.HTMLVideoElement? video);
+
+@JS('fctvIsPiP')
+external bool _fctvIsPiP(web.HTMLVideoElement? video);
+
+Future<bool> webTogglePictureInPicture() async {
+  final v = _activeVideo;
+  if (v == null) return false;
+  try {
+    final result = await _fctvTogglePiP(v).toDart;
+    if (result == null) return webIsPictureInPicture();
+    return (result as JSBoolean).toDart;
+  } catch (_) {
+    return false;
+  }
+}
+
+bool webIsPictureInPicture() {
+  final v = _activeVideo;
+  if (v == null) return false;
+  try {
+    return _fctvIsPiP(v);
+  } catch (_) {
+    return false;
+  }
+}

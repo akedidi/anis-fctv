@@ -338,6 +338,34 @@
         return !!(document.fullscreenElement || document.webkitFullscreenElement);
       };
 
+      window.fctvTogglePiP = function (video) {
+        if (!video) return Promise.reject(new Error('no video'));
+        try {
+          if (video.webkitSetPresentationMode) {
+            var mode = video.webkitPresentationMode === 'picture-in-picture'
+              ? 'inline'
+              : 'picture-in-picture';
+            video.webkitSetPresentationMode(mode);
+            return Promise.resolve(mode === 'picture-in-picture');
+          }
+          if (document.pictureInPictureElement === video) {
+            return document.exitPictureInPicture().then(function () { return false; });
+          }
+          if (document.pictureInPictureEnabled !== false && video.requestPictureInPicture) {
+            return video.requestPictureInPicture().then(function () { return true; });
+          }
+        } catch (e) {
+          return Promise.reject(e);
+        }
+        return Promise.reject(new Error('pip unsupported'));
+      };
+      window.fctvIsPiP = function (video) {
+        if (!video) return false;
+        if (document.pictureInPictureElement === video) return true;
+        if (video.webkitPresentationMode === 'picture-in-picture') return true;
+        return false;
+      };
+
       window.fctvAttachHls = function (video, url) {
         window.fctvDestroyHls();
         if (!video || !url) return Promise.resolve();

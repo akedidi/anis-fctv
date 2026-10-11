@@ -36,3 +36,7 @@ Future<void> webExitFullscreen() async {}
 bool webIsFullscreen() => false;
 
 VoidCallback webListenFullscreen(void Function(bool fullscreen) onChanged) => () {};
+
+Future<bool> webTogglePictureInPicture() async => false;
+
+bool webIsPictureInPicture() => false;
