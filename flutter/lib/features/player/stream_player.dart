@@ -200,10 +200,13 @@ class StreamPlayerState extends State<StreamPlayer> {
       if (!mounted || gen != _openGen) return;
     }
     try {
-      // Web: async resolve loses the tap gesture — browsers only allow muted autoplay.
-      final wantSound = !_muted;
+      // Web: async resolve loses the user gesture. Browsers only allow *muted* autoplay —
+      // unmuting immediately after open often leaves the <video> paused on a black frame
+      // (Westerlo / slower HLS) while the player still looks "ready".
       if (kIsWeb) {
+        _muted = true;
         await _player.setVolume(0);
+        if (mounted) setState(() {});
       }
       await _player.open(Media(url), play: true);
       if (!mounted || gen != _openGen) return;
@@ -211,30 +214,15 @@ class StreamPlayerState extends State<StreamPlayer> {
       _loadedToken = token;
       await _player.play();
       if (!mounted || gen != _openGen) return;
-      if (kIsWeb && wantSound) {
-        // Best-effort unmute after muted autoplay engages (may stay muted until user taps).
-        try {
-          await _player.setVolume(100);
-          if (mounted) setState(() => _muted = false);
-        } catch (_) {
-          if (mounted) setState(() => _muted = true);
-        }
+      if (kIsWeb) {
+        // Reinforce muted autoplay; never auto-unmute on web.
+        await _player.setVolume(0);
+        await _player.play();
       }
-      _playbackWatchdog = Timer(const Duration(seconds: 5), () {
+      _playbackWatchdog = Timer(const Duration(seconds: 2), () {
         if (!mounted || gen != _openGen) return;
-        if (_awaitingPlayback && !_playing) {
-          // Last resort: another play() then show the center control.
-          unawaited(_player.play());
-          Future<void>.delayed(const Duration(milliseconds: 400), () {
-            if (!mounted || gen != _openGen) return;
-            if (_awaitingPlayback && !_playing) {
-              setState(() {
-                _awaitingPlayback = false;
-                _showCenterChrome = true;
-              });
-            }
-          });
-        }
+        if (_playing) return;
+        unawaited(_recoverWebAutoplay(gen));
       });
     } catch (_) {
       if (!mounted || gen != _openGen) return;
@@ -251,20 +239,73 @@ class StreamPlayerState extends State<StreamPlayer> {
     }
   }
 
+  /// Muted retry then surface a play control if the HTML video stayed paused.
+  Future<void> _recoverWebAutoplay(int gen) async {
+    if (!kIsWeb || !mounted || gen != _openGen) return;
+    try {
+      _muted = true;
+      await _player.setVolume(0);
+      await _player.play();
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted || gen != _openGen) return;
+    if (!_playing) {
+      setState(() {
+        _awaitingPlayback = false;
+        _showCenterChrome = true;
+        _muted = true;
+      });
+    }
+  }
+
   Future<void> toggleMute() async {
-    _muted = !_muted;
-    await _player.setVolume(_muted ? 0 : 100);
-    setState(() {});
+    final next = !_muted;
+    await _player.setVolume(next ? 0 : 100);
+    if (!mounted) return;
+    setState(() => _muted = next);
+    // Unmute can pause under autoplay policies — keep playback alive muted if needed.
+    if (kIsWeb && !next) {
+      try {
+        await _player.play();
+      } catch (_) {
+        await _player.setVolume(0);
+        await _player.play();
+        if (mounted) setState(() => _muted = true);
+      }
+    }
   }
 
   Future<void> togglePlay() async {
-    await _player.playOrPause();
-    setState(() => _showCenterChrome = true);
+    if (_playing) {
+      await _player.pause();
+    } else {
+      if (kIsWeb && !_muted) {
+        try {
+          await _player.play();
+        } catch (_) {
+          _muted = true;
+          await _player.setVolume(0);
+          await _player.play();
+        }
+      } else {
+        await _player.play();
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _awaitingPlayback = false;
+      _showCenterChrome = true;
+    });
     _bumpAutoHide();
   }
 
   void _onVideoTap() {
-    if (_waitingForStream) return;
+    // While waiting after a loaded URL, a tap should try play — not be ignored.
+    if (_awaitingPlayback && _loadedUrl != null && !_playing) {
+      unawaited(togglePlay());
+      return;
+    }
+    if (_opening || widget.resolving) return;
     setState(() => _showCenterChrome = !_showCenterChrome);
     if (_showCenterChrome) _bumpAutoHide();
   }

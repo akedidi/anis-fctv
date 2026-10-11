@@ -1,5 +1,6 @@
 import { ApiClient } from "../api/client.js";
 import { enrichStreamCountry } from "../api/country.js";
+import { pickStreamGeo } from "../api/geo.js";
 import { buildSignedStreamUrl } from "../crypto/stream-token.js";
 import { buildProxyUrl, type ProxyContext } from "../proxy/hls.js";
 
@@ -8,6 +9,8 @@ export async function resolveMatch(
   sportTypeRaw: string | null,
   origin: string,
   streamIdRaw: string | null = null,
+  countryRaw: string | null = null,
+  continentRaw: string | null = null,
 ): Promise<Response> {
   if (!matchIdRaw || !sportTypeRaw) {
     return Response.json({ error: "matchId and sportType required" }, { status: 400 });
@@ -20,19 +23,21 @@ export async function resolveMatch(
   const wantedStreamId = streamIdRaw?.trim() || "";
   try {
     const client = new ApiClient();
-    const [geo, match, playerReferer, csl] = await Promise.all([
+    const [upstreamGeo, match, playerReferer, csl] = await Promise.all([
       client.fetchUserGeo(),
       client.fetchMatchDetail(matchId, sportType),
       client.resolvePlayerReferer(),
       client.resolveCslConfig(),
     ]);
+    // Prefer client locale (iOS) over Vercel/server IP geo from /api/user/info.
+    const geo = pickStreamGeo(countryRaw, continentRaw, upstreamGeo);
     const stream =
       (wantedStreamId
         ? match.stream.find((item) => String(item.streamId ?? "") === wantedStreamId)
         : undefined) ?? match.stream.find((item) => item.streamId);
     if (!stream?.streamId) throw new Error("no stream on match");
     if (stream.siteType == null) throw new Error("stream missing site type");
-    const detail = await client.fetchStreamDetail({
+    const detail = await client.resolveStreamDetail({
       streamId: stream.streamId,
       matchId,
       sportType,

@@ -38,6 +38,8 @@ export async function handleRequest(request: Request): Promise<Response> {
       url.searchParams.get("sportType"),
       url.origin,
       url.searchParams.get("streamId"),
+      url.searchParams.get("country"),
+      url.searchParams.get("continent"),
     );
   } else if (url.pathname === "/api/match") {
     response = await getMatchDetail(

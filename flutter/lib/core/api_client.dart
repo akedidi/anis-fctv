@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:http/http.dart' as http;
 
@@ -92,6 +93,9 @@ class FctvApi {
       'sportType': '$sportType',
     };
     if (streamId != null && streamId.isNotEmpty) q['streamId'] = streamId;
+    // iOS sends Locale region for stream/detail — not the API server's IP geo.
+    final country = ui.PlatformDispatcher.instance.locale.countryCode?.toUpperCase();
+    if (country != null && country.length == 2) q['country'] = country;
     final res = await http.get(_u('/api/resolve', q));
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     if (res.statusCode >= 400) {

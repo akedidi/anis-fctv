@@ -191,6 +191,15 @@ export function FctvApp() {
         sportType: String(match.sportType),
       });
       if (server.streamId) q.set("streamId", server.streamId);
+      // Prefer browser locale region (iOS Locale) over server IP geo.
+      const localeRegion = (() => {
+        try {
+          return new Intl.Locale(navigator.language).region?.toUpperCase();
+        } catch {
+          return undefined;
+        }
+      })();
+      if (localeRegion && /^[A-Z]{2}$/.test(localeRegion)) q.set("country", localeRegion);
       const res = await fetch(`/api/resolve?${q}`, { cache: "no-store" });
       const data = (await res.json()) as { playableUrl?: string; error?: string };
       if (!res.ok) throw new Error(data.error ?? "resolve failed");

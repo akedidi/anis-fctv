@@ -373,15 +373,19 @@ export class ApiClient {
     siteType: number;
     country?: string;
     continent?: string;
+    digit?: string;
+    withOriginal?: boolean;
   }): Promise<{ stream: StreamItem; sessionToken: string }> {
     await this.bootstrap();
-    if (!this.digit) throw new Error("site digit not set");
+    const digit = input.digit ?? this.digit;
+    if (digit == null) throw new Error("site digit not set");
     const url = new URL(`${this.baseUrl()}${PATH.streamDetail}`);
     url.searchParams.set("streamId", input.streamId);
     url.searchParams.set("matchId", input.matchId);
     url.searchParams.set("sportType", String(input.sportType));
     url.searchParams.set("siteType", String(input.siteType));
-    url.searchParams.set("digit", this.digit);
+    url.searchParams.set("digit", digit);
+    url.searchParams.set("withOriginal", input.withOriginal === false ? "false" : "true");
     if (input.continent) url.searchParams.set("continent", input.continent);
     if (input.country) url.searchParams.set("country", input.country);
 
@@ -398,6 +402,10 @@ export class ApiClient {
       }
       this.captureSession(response);
       const buffer = Buffer.from(await response.arrayBuffer());
+      const text = buffer.toString("utf8");
+      if (text.includes("Stream Not Found")) {
+        throw new Error("stream detail failed: Stream Not Found");
+      }
       const envelope = parseApiEnvelope(buffer);
       if (envelope.message !== "Success") throw new Error(`stream detail failed: ${envelope.message}`);
       const sessionToken =
@@ -406,7 +414,9 @@ export class ApiClient {
         this.rbSession;
       if (!sessionToken) throw new Error("stream detail missing session token");
       this.rbSession = sessionToken;
-      return { stream: parseStreamDetail(buffer), sessionToken };
+      const stream = parseStreamDetail(buffer);
+      if (!stream.url) throw new Error("stream detail missing url");
+      return { stream, sessionToken };
     };
 
     try {
@@ -417,6 +427,56 @@ export class ApiClient {
       this.clearSession("stream-detail");
       return await attempt(false);
     }
+  }
+
+  /**
+   * iOS `resolveStream` candidate loop: siteType → digit (snd/trd/"") → withOriginal.
+   * Bootstrap digit is tried first when present.
+   */
+  async resolveStreamDetail(input: {
+    streamId: string;
+    matchId: string;
+    sportType: number;
+    siteType: number;
+    country?: string;
+    continent?: string;
+  }): Promise<{ stream: StreamItem; sessionToken: string }> {
+    await this.bootstrap();
+    const siteCandidates = [input.siteType];
+    if (input.siteType !== 0) siteCandidates.push(0);
+    const digitCandidates = [
+      ...(this.digit ? [this.digit] : []),
+      "snd",
+      "trd",
+      "",
+    ].filter((d, i, arr) => arr.indexOf(d) === i);
+    const withOriginalCandidates = [true, false];
+    let lastError: Error | null = null;
+    for (const siteType of siteCandidates) {
+      for (const digit of digitCandidates) {
+        for (const withOriginal of withOriginalCandidates) {
+          try {
+            return await this.fetchStreamDetail({
+              ...input,
+              siteType,
+              digit,
+              withOriginal,
+            });
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            // Soft misses — keep trying the matrix (same as iOS).
+            if (!/Stream Not Found|missing url|stream detail failed/i.test(lastError.message)) {
+              // Auth / rate-limit still worth trying other digits after a short pause.
+              if (/rate limited|auth failed/i.test(lastError.message)) {
+                await new Promise((r) => setTimeout(r, 200));
+              }
+            }
+          }
+        }
+      }
+    }
+    this.clearSession("stream-detail-exhausted");
+    throw lastError ?? new Error("stream detail failed: no candidate");
   }
 
   private async get(path: string): Promise<ArrayBuffer> {

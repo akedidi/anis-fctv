@@ -10,5 +10,7 @@ export async function GET(request: Request) {
     url.searchParams.get("sportType"),
     url.origin,
     url.searchParams.get("streamId"),
+    url.searchParams.get("country"),
+    url.searchParams.get("continent"),
   );
 }
