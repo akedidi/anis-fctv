@@ -187,6 +187,20 @@
       0% { background-position: -40% 0; }
       100% { background-position: 140% 0; }
     }
+    /* media_kit HtmlElementView: keep <video> visible under CanvasKit clips */
+    flt-platform-view,
+    flt-platform-view-slot,
+    flt-glass-pane video,
+    flutter-view video {
+      clip-path: none !important;
+    }
+    flutter-view video,
+    flt-platform-view video {
+      width: 100% !important;
+      height: 100% !important;
+      object-fit: contain !important;
+      background: #000;
+    }
   </style>
 </head>
 <body>
@@ -245,6 +259,43 @@
       window.dismissFctvBoot = dismissFctvBoot;
       // Fallback only — prefer Dart dismiss after the real shell paints.
       setTimeout(dismissFctvBoot, 15000);
+
+      // Safari/CanvasKit: clip-path on flt-clip ancestors hides <video> (audio still plays).
+      function stripClipAncestors(el) {
+        var node = el;
+        var hops = 0;
+        while (node && hops < 14) {
+          if (node.style) {
+            node.style.removeProperty('clip-path');
+            node.style.removeProperty('-webkit-clip-path');
+          }
+          node = node.parentElement;
+          hops++;
+        }
+      }
+      function clearVideoClipPaths(root) {
+        if (!root) return;
+        if (root.tagName === 'VIDEO') stripClipAncestors(root);
+        var videos = root.querySelectorAll ? root.querySelectorAll('video') : [];
+        for (var i = 0; i < videos.length; i++) stripClipAncestors(videos[i]);
+      }
+      new MutationObserver(function (mutations) {
+        for (var m = 0; m < mutations.length; m++) {
+          var mut = mutations[m];
+          for (var n = 0; n < mut.addedNodes.length; n++) {
+            var el = mut.addedNodes[n];
+            if (el.nodeType === 1) clearVideoClipPaths(el);
+          }
+          if (mut.type === 'attributes' && mut.target && mut.target.nodeType === 1) {
+            clearVideoClipPaths(mut.target);
+          }
+        }
+      }).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class'],
+      });
     })();
   </script>
   <script src="flutter_bootstrap.js" async></script>

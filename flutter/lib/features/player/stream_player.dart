@@ -329,23 +329,35 @@ class StreamPlayerState extends State<StreamPlayer> {
     super.dispose();
   }
 
+  /// Flutter web + Clip* hide HtmlElementView (&lt;video&gt;) while audio still plays.
+  Widget _maybeClip(double radius, Widget child) {
+    if (kIsWeb || radius <= 0) return child;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: child,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final video = Video(
       controller: _controller,
       controls: NoVideoControls,
       fit: BoxFit.contain,
+      // Transparent so a stuck HtmlElementView isn't painted over by fill.
+      fill: Colors.transparent,
     );
 
     if (!widget.expanded) {
-      return ClipRRect(
-        borderRadius: BorderRadius.circular(8),
-        child: AspectRatio(
+      return _maybeClip(
+        8,
+        AspectRatio(
           aspectRatio: 16 / 9,
           child: Stack(
             fit: StackFit.expand,
             children: [
-              ColoredBox(color: Colors.black, child: video),
+              const ColoredBox(color: Colors.black),
+              video,
               if (_waitingForStream)
                 const ColoredBox(
                   color: Colors.black54,
@@ -369,12 +381,13 @@ class StreamPlayerState extends State<StreamPlayer> {
 
     return AspectRatio(
       aspectRatio: 16 / 9,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(widget.isFullscreen ? 0 : 10),
-        child: Stack(
+      child: _maybeClip(
+        widget.isFullscreen ? 0 : 10,
+        Stack(
           fit: StackFit.expand,
           children: [
-            ColoredBox(color: Colors.black, child: video),
+            const ColoredBox(color: Colors.black),
+            video,
             if (idleEmpty)
               const Center(
                 child: Text('Select a server', style: TextStyle(color: FctvColors.textSecondary)),

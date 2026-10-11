@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -1549,19 +1550,24 @@ class _DetailPane extends StatelessWidget {
       ],
     );
 
+    // Never ClipRRect the player on web — HtmlElementView (<video>) goes black
+    // while audio still plays (Flutter CanvasKit / Safari clip-path bug).
+    final playerWidget = StreamPlayer(
+      key: playerKey,
+      url: playableUrl,
+      loadToken: loadToken,
+      title: playerTitle,
+      resolving: resolving || detailLoading,
+      onTogglePiP: onToggleMini,
+      onToggleFullscreen: onFullscreen,
+    );
     final player = (!mini && !fullscreen)
-        ? ClipRRect(
-            borderRadius: BorderRadius.circular(compact ? 0 : 14),
-            child: StreamPlayer(
-              key: playerKey,
-              url: playableUrl,
-              loadToken: loadToken,
-              title: playerTitle,
-              resolving: resolving || detailLoading,
-              onTogglePiP: onToggleMini,
-              onToggleFullscreen: onFullscreen,
-            ),
-          )
+        ? (kIsWeb || compact
+            ? playerWidget
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                child: playerWidget,
+              ))
         : const SizedBox.shrink();
 
     final body = Column(
