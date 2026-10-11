@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 class FctvColors {
   static const background = Color(0xFF10182B);
@@ -16,7 +15,17 @@ class FctvColors {
   static const headerStart = Color(0xFF1E2748);
 }
 
+/// Local theme only — no runtime font fetch (that delayed first paint on web).
 ThemeData buildFctvTheme() {
+  const brand = TextStyle(
+    fontFamily: 'SF Pro Display',
+    fontFamilyFallback: [
+      'Segoe UI',
+      'Helvetica Neue',
+      'Arial',
+      'sans-serif',
+    ],
+  );
   final base = ThemeData(
     brightness: Brightness.dark,
     scaffoldBackgroundColor: FctvColors.background,
@@ -27,16 +36,24 @@ ThemeData buildFctvTheme() {
       error: FctvColors.live,
     ),
     useMaterial3: true,
+    fontFamily: brand.fontFamily,
+  );
+  final text = base.textTheme.apply(
+    bodyColor: Colors.white,
+    displayColor: Colors.white,
+    fontFamily: brand.fontFamily,
   );
   return base.copyWith(
-    textTheme: GoogleFonts.manropeTextTheme(base.textTheme).apply(
-      bodyColor: Colors.white,
-      displayColor: Colors.white,
+    textTheme: text,
+    progressIndicatorTheme: const ProgressIndicatorThemeData(
+      color: FctvColors.accent,
+      linearTrackColor: Colors.transparent,
+      circularTrackColor: Colors.transparent,
     ),
     appBarTheme: AppBarTheme(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      titleTextStyle: GoogleFonts.sora(
+      titleTextStyle: text.titleLarge?.copyWith(
         fontWeight: FontWeight.w800,
         fontSize: 20,
         letterSpacing: 1.2,

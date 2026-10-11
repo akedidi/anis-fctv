@@ -1,10 +1,18 @@
 export const ENTRY_ORIGIN = "https://www.fctv33.com";
 
+/** Same defaults as iOS `RbliveHTTPClient` when the entry HTML is blocked (403). */
+export const FALLBACK_DATA_API_HOST =
+  process.env.FCTV_DATA_API_HOST?.replace(/^https?:\/\//, "").replace(/\/.*$/, "") ||
+  "apis-data10.tcllu137fien.ru";
+export const FALLBACK_DIGIT = process.env.FCTV_DIGIT || "snd";
+
 export const PATH = {
   live: "/api/match/live",
   matchDetail: "/api/match/detail",
   matchLineup: "/api/match/lineup",
   matchEvent: "/api/match/event",
+  matchStatistic: "/api/match/statistic",
+  matchAnalysis: "/api/match/analysis",
   streamDetail: "/api/stream/detail",
   params: "/api/common/params",
   signatures: "/api/common/bs",

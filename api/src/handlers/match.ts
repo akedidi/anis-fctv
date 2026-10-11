@@ -1,4 +1,5 @@
 import { ApiClient } from "../api/client.js";
+import { enrichStreamCountry } from "../api/country.js";
 import { buildSignedStreamUrl } from "../crypto/stream-token.js";
 import { buildProxyUrl, type ProxyContext } from "../proxy/hls.js";
 
@@ -83,16 +84,22 @@ export async function getMatchDetail(
   }
   try {
     const detail = await new ApiClient().fetchMatchDetail(matchId, sportType, language);
+    const region = detail.match?.region ?? "";
     return Response.json({
       match: detail.match,
-      streams: detail.stream.map((s, i) => ({
-        id: s.streamId ?? `s-${i}`,
-        name: s.name ?? s.fullName ?? `Stream ${s.streamId ?? i}`,
-        fullName: s.fullName ?? "",
-        streamId: s.streamId,
-        siteType: s.siteType,
-        country: s.country ?? "",
-      })),
+      streams: detail.stream.map((s, i) =>
+        enrichStreamCountry(
+          {
+            id: s.streamId ?? `s-${i}`,
+            name: (s.name ?? s.fullName ?? `Stream ${s.streamId ?? i}`).replace(/^\$+/, "").trim(),
+            fullName: (s.fullName ?? "").replace(/^\$+/, "").trim(),
+            streamId: s.streamId,
+            siteType: s.siteType,
+            country: s.country ?? "",
+          },
+          region,
+        ),
+      ),
     });
   } catch (error) {
     return Response.json(
@@ -143,6 +150,54 @@ export async function getMatchEvents(
   } catch (error) {
     return Response.json(
       { error: error instanceof Error ? error.message : "events failed" },
+      { status: 502 },
+    );
+  }
+}
+
+export async function getMatchStatistics(
+  matchIdRaw: string | null,
+  sportTypeRaw: string | null,
+  languageRaw: string | null,
+): Promise<Response> {
+  if (!matchIdRaw || !sportTypeRaw) {
+    return Response.json({ error: "matchId and sportType required" }, { status: 400 });
+  }
+  try {
+    const stats = await new ApiClient().fetchMatchStatistics(
+      matchIdRaw.trim(),
+      Number(sportTypeRaw),
+      Number(languageRaw ?? 0),
+    );
+    return Response.json({ stats });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "statistics failed" },
+      { status: 502 },
+    );
+  }
+}
+
+export async function getMatchH2H(
+  matchIdRaw: string | null,
+  sportTypeRaw: string | null,
+  homeNameRaw: string | null,
+  languageRaw: string | null,
+): Promise<Response> {
+  if (!matchIdRaw || !sportTypeRaw) {
+    return Response.json({ error: "matchId and sportType required" }, { status: 400 });
+  }
+  try {
+    const h2h = await new ApiClient().fetchMatchH2H(
+      matchIdRaw.trim(),
+      Number(sportTypeRaw),
+      homeNameRaw?.trim() ?? "",
+      Number(languageRaw ?? 0),
+    );
+    return Response.json({ h2h });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "h2h failed" },
       { status: 502 },
     );
   }

@@ -100,7 +100,9 @@ export function FctvApp() {
 
   const filtered = useMemo(() => {
     let list = matches;
-    if (filter === "live") list = list.filter((m) => !isFinishedStatus(m.statusCode));
+    if (filter === "live") {
+      list = list.filter((m) => isLiveStatus(m.statusCode) && !isFinishedStatus(m.statusCode));
+    }
     if (filter === "finished") list = list.filter((m) => isFinishedStatus(m.statusCode));
     if (appliedSearch) {
       list = list.filter((m) => {

@@ -3,7 +3,9 @@ import { listLiveMatches } from "./handlers/live.js";
 import {
   getMatchDetail,
   getMatchEvents,
+  getMatchH2H,
   getMatchLineup,
+  getMatchStatistics,
   resolveMatch,
 } from "./handlers/match.js";
 
@@ -53,6 +55,19 @@ export async function handleRequest(request: Request): Promise<Response> {
     response = await getMatchEvents(
       url.searchParams.get("matchId"),
       url.searchParams.get("sportType"),
+      url.searchParams.get("language"),
+    );
+  } else if (url.pathname === "/api/match/stats") {
+    response = await getMatchStatistics(
+      url.searchParams.get("matchId"),
+      url.searchParams.get("sportType"),
+      url.searchParams.get("language"),
+    );
+  } else if (url.pathname === "/api/match/h2h") {
+    response = await getMatchH2H(
+      url.searchParams.get("matchId"),
+      url.searchParams.get("sportType"),
+      url.searchParams.get("homeName"),
       url.searchParams.get("language"),
     );
   } else if (url.pathname === "/api/health") {
