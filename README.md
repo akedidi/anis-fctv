@@ -42,15 +42,32 @@ open ios-flutter/Runner.xcworkspace
 cd flutter && flutter run -d ios --dart-define=API_BASE=http://127.0.0.1:3000
 ```
 
-## Vercel
+## API on Cloudflare Workers (recommended)
 
-1. **API project**: Root Directory = `api` → deploy.
-2. **Flutter web**: build then host static output:
+Avoids Vercel Deployment Protection / cold-start flakes for `/api/match/events` etc.
+
+```bash
+cd api
+npm install
+npx wrangler login          # once
+npm run deploy:worker
+```
+
+**Production API:** https://fctv33-api.kedidi-anis.workers.dev
+
+Local worker:
+
+```bash
+cd api && npm run dev:worker   # http://127.0.0.1:3000
+```
+
+## Vercel (Flutter static only)
+
+Set Vercel env `API_BASE=https://fctv33-api.kedidi-anis.workers.dev` on the Flutter project, or:
 
 ```bash
 cd flutter
-flutter build web --dart-define=API_BASE=https://YOUR-API.vercel.app
-# deploy build/web (Vercel static / any CDN)
+flutter build web --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev
 ```
 
 ## Android TV

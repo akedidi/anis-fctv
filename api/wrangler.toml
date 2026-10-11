@@ -1,0 +1,7 @@
+name = "fctv33-api"
+main = "src/worker.ts"
+compatibility_date = "2025-09-01"
+compatibility_flags = ["nodejs_compat", "global_fetch_strictly_public"]
+
+# Public *.workers.dev URL (disabled at account/worker level → Cloudflare error 1042).
+workers_dev = true
