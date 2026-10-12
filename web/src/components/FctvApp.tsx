@@ -235,7 +235,7 @@ export function FctvApp() {
             <div className="brand-mark">F</div>
             <div>
               <h1>FCTV33</h1>
-              <p>Live Sports · Anywhere</p>
+              <p>Live Sports · BY ANIS</p>
             </div>
           </div>
           <button type="button" className="refresh-btn" onClick={() => void loadMatches()}>

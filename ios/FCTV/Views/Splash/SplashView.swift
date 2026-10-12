@@ -41,7 +41,7 @@ struct SplashView: View {
                             .fill(Theme.Colors.accent)
                             .frame(width: 72, height: 3)
 
-                        Text("Live Sports · Anywhere")
+                        Text("Live Sports · BY ANIS")
                             .font(.system(size: 16, weight: .semibold, design: .rounded))
                             .foregroundStyle(Theme.Colors.textSecondary)
                             .tracking(0.6)

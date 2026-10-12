@@ -1047,7 +1047,7 @@ class _LeftPane extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text('FCTV33', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20, letterSpacing: 1.2)),
-                      Text('Live Sports', style: TextStyle(color: FctvColors.textSecondary, fontSize: 12)),
+                      Text('Live Sports · BY ANIS', style: TextStyle(color: FctvColors.textSecondary, fontSize: 12)),
                     ],
                   ),
                 ),
