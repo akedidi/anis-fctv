@@ -20,7 +20,11 @@ enum HomeFilter { all, live, finished }
 /// Mirrors iOS phone / split presentation.
 enum _ShellLayout { phone, split }
 
-_ShellLayout _shellLayoutFor(double width) => width < 840 ? _ShellLayout.phone : _ShellLayout.split;
+_ShellLayout _shellLayoutFor(double width) {
+  // Android TV always uses the dual-pane leanback shell (list + detail).
+  if (isAndroidTv) return _ShellLayout.split;
+  return width < 840 ? _ShellLayout.phone : _ShellLayout.split;
+}
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -64,6 +68,9 @@ class _HomePageState extends State<HomePage> {
   /// Per-sport event counts for tab / More badges (sportType → count).
   final Map<int, int> _sportCounts = {};
   int _countsGen = 0;
+  /// Silent list score/clock poll (same cadence as detail).
+  Timer? _listPollTimer;
+  static const _livePollSeconds = 20;
 
   /// Extra sports merged after primary tabs when browsing "All".
   static const _allExtraSports = [7, 9, 8, 4, 6, 11, 13, 14, 15, 16, 5, 10, 12, 17];
@@ -80,6 +87,10 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       dismissWebBoot();
       _load(); // sport counts start after list load — avoids Cloudflare 429 fan-out
+      _listPollTimer = Timer.periodic(
+        const Duration(seconds: _livePollSeconds),
+        (_) => unawaited(_refreshListQuiet()),
+      );
     });
   }
 
@@ -147,11 +158,76 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    _listPollTimer?.cancel();
+    _listPollTimer = null;
     _webFsUnsub?.call();
     _webFsUnsub = null;
     _detailRefreshGen++;
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  LiveMatch _mergeLiveFields(LiveMatch prev, LiveMatch next) {
+    return prev.copyWith(
+      homeScore: next.homeScore ?? prev.homeScore,
+      awayScore: next.awayScore ?? prev.awayScore,
+      liveClock: next.liveClock ?? prev.liveClock,
+      statusCode: next.statusCode,
+      streams: next.streams.isNotEmpty ? next.streams : prev.streams,
+      hasStreams: next.hasStreams || prev.hasStreams || next.streams.isNotEmpty,
+    );
+  }
+
+  void _applyListUpdate(List<LiveMatch> list) {
+    final sel = _selected;
+    LiveMatch? nextSelected;
+    if (sel != null) {
+      for (final m in list) {
+        if (m.matchId == sel.matchId) {
+          nextSelected = _mergeLiveFields(sel, m);
+          break;
+        }
+      }
+    }
+    setState(() {
+      _matches = list;
+      if (nextSelected != null) _selected = nextSelected;
+    });
+  }
+
+  /// Background list reload — keeps scores/clocks fresh without the loading chrome.
+  Future<void> _refreshListQuiet() async {
+    if (!mounted || _loading) return;
+    final sport = _sportType;
+    try {
+      if (sport == 0) {
+        // Refresh primary tabs only — full "All" fan-out is too heavy for a silent tick.
+        final byId = <int, LiveMatch>{for (final m in _matches) m.matchId: m};
+        for (final st in const [1, 2, 3, 90]) {
+          if (!mounted || _sportType != 0) return;
+          final list = await _api.fetchLive(sportType: st);
+          if (!mounted || _sportType != 0) return;
+          for (final m in list) {
+            final prev = byId[m.matchId];
+            byId[m.matchId] = prev == null ? m : _mergeLiveFields(prev, m);
+          }
+          _setSportCount(st, list.length);
+        }
+        if (!mounted || _sportType != 0) return;
+        final next = byId.values.toList();
+        _sortMatches(next);
+        if (next.isEmpty) return;
+        _applyListUpdate(next);
+        return;
+      }
+      final list = await _api.fetchLive(sportType: sport);
+      if (!mounted || _sportType != sport) return;
+      if (list.isEmpty) return;
+      _setSportCount(sport, list.length);
+      _applyListUpdate(list);
+    } catch (_) {
+      // Soft-fail — next tick retries.
+    }
   }
 
   void _sortMatches(List<LiveMatch> list) {
@@ -563,7 +639,16 @@ class _HomePageState extends State<HomePage> {
         _selected = merged;
         if (list.isNotEmpty) _servers = list;
         _events = nextEvents;
+        // Keep the home list row in sync with the open match.
+        _matches = [
+          for (final m in _matches)
+            if (m.matchId == merged.matchId) _mergeLiveFields(m, merged) else m,
+        ];
       });
+      // Also refresh tabs that hit the API (lineup / stats / H2H).
+      unawaited(_loadLineup(merged, refreshGen));
+      unawaited(_loadStats(merged, refreshGen));
+      unawaited(_loadH2H(merged, refreshGen));
       if (_playableUrl == null && list.isNotEmpty && _activeServerId == null) {
         unawaited(_playServer(merged, list.first));
       } else if (list.isEmpty && merged.hasStreams && _servers.isEmpty) {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HlsPlayer } from "./HlsPlayer";
 import { apiUrl } from "@/lib/api";
 import {
@@ -17,6 +17,25 @@ import {
 
 type Filter = "all" | "live" | "finished";
 type Tab = "overview" | "lineups" | "stats" | "h2h";
+
+/** Same cadence as iOS / Flutter detail + list live polling. */
+const LIVE_POLL_MS = 20_000;
+
+function mergeLiveFields(prev: LiveMatch, next: LiveMatch): LiveMatch {
+  return {
+    ...prev,
+    homeScore: next.homeScore ?? prev.homeScore,
+    awayScore: next.awayScore ?? prev.awayScore,
+    liveClock: next.liveClock ?? prev.liveClock,
+    statusCode: next.statusCode,
+    hot: next.hot,
+    name: next.name || prev.name,
+    leagueName: next.leagueName || prev.leagueName,
+    region: next.region || prev.region,
+    contenders: next.contenders?.length ? next.contenders : prev.contenders,
+    streams: next.streams?.length ? next.streams : prev.streams,
+  };
+}
 
 function Logo({ src, name, size = 22 }: { src?: string; name: string; size?: number }) {
   const [failed, setFailed] = useState(false);
@@ -69,27 +88,130 @@ export function FctvApp() {
   const [mini, setMini] = useState(false);
   const [showMore, setShowMore] = useState(false);
 
-  const loadMatches = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  const applyMatchList = useCallback((next: LiveMatch[]) => {
+    setMatches(next);
+    setDetail((prev) => {
+      if (!prev) return prev;
+      const row = next.find((m) => m.matchId === prev.matchId);
+      return row ? mergeLiveFields(prev, row) : prev;
+    });
+  }, []);
+
+  const loadMatches = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent === true;
+      if (!silent) {
+        setLoading(true);
+        setError(null);
+      }
+      try {
+        const res = await fetch(apiUrl(`/api/live?sportType=${sportType}&language=0`), {
+          cache: "no-store",
+        });
+        const data = (await res.json()) as { matches?: LiveMatch[]; error?: string };
+        if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+        const next = data.matches ?? [];
+        if (silent && next.length === 0) return;
+        applyMatchList(next);
+        if (!silent) setError(null);
+      } catch (e) {
+        if (!silent) {
+          setError(e instanceof Error ? e.message : "Failed to load");
+          setMatches([]);
+        }
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [sportType, applyMatchList],
+  );
+
+  const detailRef = useRef(detail);
+  const matchesRef = useRef(matches);
+  const selectedIdRef = useRef(selectedId);
+  detailRef.current = detail;
+  matchesRef.current = matches;
+  selectedIdRef.current = selectedId;
+
+  const refreshSelectedDetail = useCallback(async (match: LiveMatch) => {
     try {
-      const res = await fetch(apiUrl(`/api/live?sportType=${sportType}&language=0`), {
-        cache: "no-store",
-      });
-      const data = (await res.json()) as { matches?: LiveMatch[]; error?: string };
-      if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
-      setMatches(data.matches ?? []);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
-      setMatches([]);
-    } finally {
-      setLoading(false);
+      const [detailRes, eventsRes, lineupRes] = await Promise.all([
+        fetch(apiUrl(`/api/match?matchId=${match.matchId}&sportType=${match.sportType}&language=0`), {
+          cache: "no-store",
+        }),
+        fetch(apiUrl(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`), {
+          cache: "no-store",
+        }),
+        fetch(apiUrl(`/api/match/lineup?matchId=${match.matchId}&sportType=${match.sportType}`), {
+          cache: "no-store",
+        }),
+      ]);
+
+      if (detailRes.ok) {
+        const data = (await detailRes.json()) as {
+          match?: LiveMatch;
+          streams?: StreamServer[];
+        };
+        if (selectedIdRef.current !== match.matchId) return;
+        const prev = detailRef.current?.matchId === match.matchId ? detailRef.current : match;
+        const merged = mergeLiveFields(prev, { ...prev, ...(data.match ?? {}) });
+        const streams = (data.streams ?? merged.streams) as StreamServer[];
+        const withStreams = streams.length ? { ...merged, streams } : merged;
+        const list = reliableServers(withStreams.streams);
+        setDetail(withStreams);
+        setServers(list.length ? list : withStreams.streams);
+        setMatches((rows) =>
+          rows.map((r) => (r.matchId === withStreams.matchId ? mergeLiveFields(r, withStreams) : r)),
+        );
+      }
+
+      if (selectedIdRef.current !== match.matchId) return;
+
+      if (eventsRes.ok) {
+        const d = (await eventsRes.json()) as { events?: MatchEvent[] };
+        if (d.events && d.events.length > 0) setEvents(d.events);
+      }
+
+      if (lineupRes.ok) {
+        const d = (await lineupRes.json()) as {
+          lineup?: { home: LineupPlayer[]; away: LineupPlayer[] };
+        };
+        if (d.lineup) setLineup(d.lineup);
+      }
+    } catch {
+      // Soft-fail — next poll retries.
     }
-  }, [sportType]);
+  }, []);
 
   useEffect(() => {
     void loadMatches();
   }, [loadMatches]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void loadMatches({ silent: true });
+    }, LIVE_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [loadMatches]);
+
+  useEffect(() => {
+    if (selectedId == null) return;
+    const tick = () => {
+      const id = selectedIdRef.current;
+      if (id == null) return;
+      const match =
+        detailRef.current?.matchId === id
+          ? detailRef.current
+          : matchesRef.current.find((m) => m.matchId === id);
+      if (match) void refreshSelectedDetail(match);
+    };
+    const delay = window.setTimeout(tick, 3_000);
+    const id = window.setInterval(tick, LIVE_POLL_MS);
+    return () => {
+      window.clearTimeout(delay);
+      window.clearInterval(id);
+    };
+  }, [selectedId, refreshSelectedDetail]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setAppliedSearch(search.trim().toLowerCase()), 160);
