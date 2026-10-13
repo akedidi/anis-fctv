@@ -1,8 +1,8 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "if [ ! -d \"$HOME/flutter/bin\" ]; then git clone --depth 1 -b stable https://github.com/flutter/flutter.git \"$HOME/flutter\"; fi; export PATH=\"$HOME/flutter/bin:$PATH\"; flutter config --no-analytics --enable-web; flutter pub get",
-  "buildCommand": "export PATH=\"$HOME/flutter/bin:$PATH\"; flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
+  "installCommand": "if [ ! -d \"$HOME/flutter/bin\" ]; then git clone --depth 1 -b stable https://github.com/flutter/flutter.git \"$HOME/flutter\"; fi; export PATH=\"$HOME/flutter/bin:$PATH\"; flutter config --no-analytics --enable-web; if [ -f pubspec.yaml ]; then flutter pub get; elif [ -f flutter/pubspec.yaml ]; then cd flutter && flutter pub get; else echo 'ERROR: pubspec.yaml not found' >&2; pwd; ls -la; exit 1; fi",
+  "buildCommand": "export PATH=\"$HOME/flutter/bin:$PATH\"; if [ -f pubspec.yaml ]; then flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev; elif [ -f flutter/pubspec.yaml ]; then cd flutter && flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev; else echo 'ERROR: pubspec.yaml not found' >&2; exit 1; fi",
   "outputDirectory": "build/web",
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
