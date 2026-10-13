@@ -1,8 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
-  "installCommand": "set -e; SDK=\"$HOME/flutter-sdk\"; if [ ! -x \"$SDK/bin/flutter\" ]; then rm -rf \"$SDK\"; git clone --depth 1 -b stable https://github.com/flutter/flutter.git \"$SDK\"; fi; export PATH=\"$SDK/bin:$PATH\"; flutter config --no-analytics --enable-web; echo \"CWD=$(pwd)\"; ls -la pubspec.yaml; flutter pub get",
-  "buildCommand": "set -e; export PATH=\"$HOME/flutter-sdk/bin:$PATH\"; echo \"CWD=$(pwd)\"; flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
+  "installCommand": "set -e; SDK=$HOME/flutter-sdk; [ -x $SDK/bin/flutter ] || git clone --depth 1 -b stable https://github.com/flutter/flutter.git $SDK; export PATH=$SDK/bin:$PATH; flutter config --no-analytics --enable-web; flutter pub get",
+  "buildCommand": "set -e; export PATH=$HOME/flutter-sdk/bin:$PATH; flutter build web --release --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev",
   "outputDirectory": "build/web",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
 }
