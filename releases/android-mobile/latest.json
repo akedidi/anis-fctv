@@ -1,0 +1,8 @@
+{
+  "channel": "android-mobile",
+  "versionCode": 2,
+  "versionName": "1.0.1",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.1/FCTV33-mobile-release.apk",
+  "changelog": "Video playback reliability and denser match list.",
+  "publishedAt": "2026-10-13"
+}

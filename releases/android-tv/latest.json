@@ -1,0 +1,8 @@
+{
+  "channel": "android-tv",
+  "versionCode": 2,
+  "versionName": "1.0.1",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.1/FCTV33-tv-release.apk",
+  "changelog": "Video playback fix (ExoPlayer), denser match list, TV remote UX.",
+  "publishedAt": "2026-10-13"
+}
