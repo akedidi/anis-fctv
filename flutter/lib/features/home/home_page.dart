@@ -38,8 +38,8 @@ class _HomePageState extends State<HomePage> {
   final _searchCtrl = TextEditingController();
   final _playerKey = GlobalKey<StreamPlayerState>();
 
-  /// Football first — "All" fans out many upstream calls and can return empty under rate limits.
-  int _sportType = 1;
+  /// Default sport tab: All (0). Football = 1.
+  int _sportType = 0;
   HomeFilter _filter = HomeFilter.all;
   String _query = '';
   bool _loading = true;
