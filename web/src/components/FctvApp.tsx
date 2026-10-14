@@ -223,6 +223,8 @@ export function FctvApp() {
     [matches],
   );
 
+  const selected = detail ?? matches.find((m) => m.matchId === selectedId) ?? null;
+
   const filtered = useMemo(() => {
     let list = matches;
     if (filter === "live") {
@@ -242,20 +244,25 @@ export function FctvApp() {
         return hay.includes(appliedSearch);
       });
     }
+    // Pin the playing match so filter/search never hides the active session.
+    if (selected && !list.some((m) => m.matchId === selected.matchId)) {
+      list = [selected, ...list];
+    }
     return list;
-  }, [matches, filter, appliedSearch]);
-
-  const selected = detail ?? matches.find((m) => m.matchId === selectedId) ?? null;
+  }, [matches, filter, appliedSearch, selected]);
 
   const openMatch = async (match: LiveMatch) => {
+    const switching = match.matchId !== selectedId;
     setSelectedId(match.matchId);
     setDetail(match);
     setMini(false);
     setTab("overview");
-    setPlayableUrl(null);
-    setActiveServerId(null);
-    setEvents([]);
-    setLineup(null);
+    if (switching) {
+      setPlayableUrl(null);
+      setActiveServerId(null);
+      setEvents([]);
+      setLineup(null);
+    }
     setResolving(true);
     try {
       const res = await fetch(
@@ -268,6 +275,7 @@ export function FctvApp() {
         error?: string;
       };
       if (!res.ok) throw new Error(data.error ?? "detail failed");
+      if (selectedIdRef.current !== match.matchId) return;
       const merged: LiveMatch = {
         ...match,
         ...(data.match ?? {}),
@@ -277,13 +285,14 @@ export function FctvApp() {
       const list = reliableServers(merged.streams);
       setServers(list.length ? list : merged.streams);
       const first = (list.length ? list : merged.streams)[0];
-      if (first) await playServer(merged, first);
+      if (first && (switching || !playableUrl)) await playServer(merged, first);
     } catch (e) {
+      if (selectedIdRef.current !== match.matchId) return;
       setError(e instanceof Error ? e.message : "Detail failed");
       const list = reliableServers(match.streams);
       setServers(list.length ? list : match.streams);
     } finally {
-      setResolving(false);
+      if (selectedIdRef.current === match.matchId) setResolving(false);
     }
 
     void fetch(apiUrl(`/api/match/events?matchId=${match.matchId}&sportType=${match.sportType}`), {
@@ -292,6 +301,7 @@ export function FctvApp() {
       .then(async (r) => {
         const d = (await r.json()) as { events?: MatchEvent[]; error?: string };
         if (!r.ok) throw new Error(d.error ?? `events failed (${r.status})`);
+        if (selectedIdRef.current !== match.matchId) return;
         setEvents(d.events ?? []);
       })
       .catch(() => {
@@ -299,10 +309,13 @@ export function FctvApp() {
       });
     void fetch(apiUrl(`/api/match/lineup?matchId=${match.matchId}&sportType=${match.sportType}`))
       .then((r) => r.json())
-      .then((d: { lineup?: { home: LineupPlayer[]; away: LineupPlayer[] } }) =>
-        setLineup(d.lineup ?? null),
-      )
-      .catch(() => setLineup(null));
+      .then((d: { lineup?: { home: LineupPlayer[]; away: LineupPlayer[] } }) => {
+        if (selectedIdRef.current !== match.matchId) return;
+        setLineup(d.lineup ?? null);
+      })
+      .catch(() => {
+        if (selectedIdRef.current === match.matchId) setLineup(null);
+      });
   };
 
   const playServer = async (match: LiveMatch, server: StreamServer) => {

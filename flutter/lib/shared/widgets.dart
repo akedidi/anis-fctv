@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../core/country.dart';
 import '../core/models.dart';
 import '../core/theme.dart';
+import 'tv_focus.dart';
 
 /// Headers required by rblive logo CDNs (same as iOS Kingfisher modifier).
 const logoHeaders = <String, String>{
@@ -234,11 +235,14 @@ class MatchRowCard extends StatelessWidget {
     required this.match,
     required this.selected,
     required this.onTap,
+    this.compact = false,
   });
 
   final LiveMatch match;
   final bool selected;
   final VoidCallback onTap;
+  /// Denser row for Android TV / leanback — more matches visible.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -248,20 +252,33 @@ class MatchRowCard extends StatelessWidget {
     final time = match.timeLabel;
     final date = match.dateLabel;
     final isToday = match.isKickoffToday;
+    final radius = compact ? 10.0 : 14.0;
+    final pad = compact ? const EdgeInsets.fromLTRB(8, 6, 8, 6) : const EdgeInsets.fromLTRB(12, 10, 12, 10);
 
     return Material(
       color: selected ? const Color(0x28FFAE01) : FctvColors.surface.withValues(alpha: 0.92),
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(radius),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(radius),
         onTap: onTap,
-        focusColor: FctvColors.accent.withValues(alpha: 0.2),
-        child: Container(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        autofocus: false,
+        canRequestFocus: true,
+        focusColor: FctvColors.accent.withValues(alpha: 0.28),
+        hoverColor: FctvColors.accent.withValues(alpha: 0.12),
+        child: Builder(
+          builder: (context) {
+            final focused = Focus.of(context).hasFocus;
+            return Container(
+          padding: pad,
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(radius),
             border: Border.all(
-              color: selected ? FctvColors.accent.withValues(alpha: 0.7) : Colors.white.withValues(alpha: 0.06),
+              color: focused
+                  ? FctvColors.accent
+                  : selected
+                      ? FctvColors.accent.withValues(alpha: 0.7)
+                      : Colors.white.withValues(alpha: 0.06),
+              width: focused ? 2 : 1,
             ),
           ),
           child: Column(
@@ -272,11 +289,11 @@ class MatchRowCard extends StatelessWidget {
                   RemoteLogo(
                     url: match.leagueLogoUrl,
                     name: match.leagueName,
-                    size: 18,
+                    size: compact ? 14 : 18,
                     cornerRadius: 4,
                     lightBadge: true,
                   ),
-                  const SizedBox(width: 8),
+                  SizedBox(width: compact ? 6 : 8),
                   Expanded(
                     child: Text(
                       match.leagueName.isEmpty
@@ -284,9 +301,9 @@ class MatchRowCard extends StatelessWidget {
                           : match.leagueName,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         color: FctvColors.textSecondary,
-                        fontSize: 12,
+                        fontSize: compact ? 10 : 12,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -294,7 +311,7 @@ class MatchRowCard extends StatelessWidget {
                   StatusBadge(match: match),
                 ],
               ),
-              const SizedBox(height: 10),
+              SizedBox(height: compact ? 5 : 10),
               if (match.isVersus)
                 Row(
                   children: [
@@ -303,22 +320,24 @@ class MatchRowCard extends StatelessWidget {
                       kickoff: time,
                       clock: match.isCurrentlyLive ? match.liveClock : null,
                       finished: match.isFinished,
+                      compact: compact,
                     ),
-                    const SizedBox(width: 8),
+                    SizedBox(width: compact ? 6 : 8),
                     Expanded(
                       child: _VersusTeam(
                         name: home?.name ?? '',
                         logo: home?.logoUrl,
                         alignEnd: false,
+                        compact: compact,
                       ),
                     ),
                     Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 6),
                       child: Text(
                         match.scoreText,
                         style: TextStyle(
                           fontWeight: FontWeight.w900,
-                          fontSize: 14,
+                          fontSize: compact ? 12 : 14,
                           color: match.isFinished ? FctvColors.textTertiary : Colors.white,
                         ),
                       ),
@@ -328,6 +347,7 @@ class MatchRowCard extends StatelessWidget {
                         name: away?.name ?? '',
                         logo: away?.logoUrl,
                         alignEnd: true,
+                        compact: compact,
                       ),
                     ),
                   ],
@@ -341,28 +361,29 @@ class MatchRowCard extends StatelessWidget {
                       kickoff: time,
                       clock: match.isCurrentlyLive ? match.liveClock : null,
                       finished: match.isFinished,
+                      compact: compact,
                     ),
-                    const SizedBox(width: 12),
-                    _SoloEventLogo(match: match),
-                    const SizedBox(width: 12),
+                    SizedBox(width: compact ? 8 : 12),
+                    _SoloEventLogo(match: match, compact: compact),
+                    SizedBox(width: compact ? 8 : 12),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             match.displayName,
-                            maxLines: 2,
+                            maxLines: compact ? 1 : 2,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: compact ? 12 : 16),
                           ),
                           if (match.scoreText.isNotEmpty && match.scoreText != 'VS') ...[
-                            const SizedBox(height: 4),
+                            SizedBox(height: compact ? 2 : 4),
                             Text(
                               match.scoreText,
-                              style: const TextStyle(
+                              style: TextStyle(
                                 color: FctvColors.textSecondary,
                                 fontWeight: FontWeight.w600,
-                                fontSize: 12,
+                                fontSize: compact ? 10 : 12,
                               ),
                             ),
                           ],
@@ -373,6 +394,8 @@ class MatchRowCard extends StatelessWidget {
                 ),
             ],
           ),
+        );
+          },
         ),
       ),
     );
@@ -386,37 +409,45 @@ class _TimeCol extends StatelessWidget {
     required this.kickoff,
     this.clock,
     this.finished = false,
+    this.compact = false,
   });
   final String? date;
   final String kickoff;
   final String? clock;
   final bool finished;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final kickSize = compact ? 10.0 : 12.0;
+    final clockSize = compact ? 11.0 : 13.0;
     return SizedBox(
-      width: 52,
+      width: compact ? 40 : 52,
       child: Column(
         children: [
           if (date != null)
             Text(
               date!,
-              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: FctvColors.textTertiary),
+              style: TextStyle(
+                fontSize: compact ? 8 : 10,
+                fontWeight: FontWeight.w600,
+                color: FctvColors.textTertiary,
+              ),
             ),
           Text(
             kickoff,
-            style: const TextStyle(
-              fontSize: 12,
+            style: TextStyle(
+              fontSize: kickSize,
               fontWeight: FontWeight.w600,
               color: FctvColors.textSecondary,
             ),
           ),
           if (finished)
-            const Text('FT', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: FctvColors.textTertiary))
+            Text('FT', style: TextStyle(fontSize: clockSize, fontWeight: FontWeight.w800, color: FctvColors.textTertiary))
           else if (clock != null && clock!.isNotEmpty)
             Text(
               clock!,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800, color: FctvColors.clock),
+              style: TextStyle(fontSize: clockSize, fontWeight: FontWeight.w800, color: FctvColors.clock),
             ),
         ],
       ),
@@ -425,23 +456,52 @@ class _TimeCol extends StatelessWidget {
 }
 
 class _VersusTeam extends StatelessWidget {
-  const _VersusTeam({required this.name, this.logo, this.alignEnd = false});
+  const _VersusTeam({
+    required this.name,
+    this.logo,
+    this.alignEnd = false,
+    this.compact = false,
+  });
   final String name;
   final String? logo;
   final bool alignEnd;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    if (name.isEmpty) return const SizedBox(height: 44);
+    if (name.isEmpty) return SizedBox(height: compact ? 22 : 44);
+    final logoSize = compact ? 18.0 : 28.0;
+    final nameStyle = TextStyle(
+      fontWeight: FontWeight.w600,
+      fontSize: compact ? 11 : 13,
+    );
+    if (compact) {
+      // Single-line: logo + name — much shorter rows on TV.
+      final logoW = RemoteLogo(url: logo, name: name, size: logoSize);
+      final nameW = Expanded(
+        child: Text(
+          name,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          textAlign: alignEnd ? TextAlign.end : TextAlign.start,
+          style: nameStyle,
+        ),
+      );
+      return Row(
+        children: alignEnd
+            ? [nameW, const SizedBox(width: 5), logoW]
+            : [logoW, const SizedBox(width: 5), nameW],
+      );
+    }
     final kids = <Widget>[
-      RemoteLogo(url: logo, name: name, size: 28),
+      RemoteLogo(url: logo, name: name, size: logoSize),
       const SizedBox(height: 6),
       Text(
         name,
         maxLines: 2,
         overflow: TextOverflow.ellipsis,
         textAlign: alignEnd ? TextAlign.end : TextAlign.start,
-        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+        style: nameStyle,
       ),
     ];
     return Column(
@@ -452,33 +512,35 @@ class _VersusTeam extends StatelessWidget {
 }
 
 class _SoloEventLogo extends StatelessWidget {
-  const _SoloEventLogo({required this.match});
+  const _SoloEventLogo({required this.match, this.compact = false});
   final LiveMatch match;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final size = compact ? 26.0 : 36.0;
     final side = match.meaningfulContenders.isNotEmpty ? match.meaningfulContenders.first : null;
     if (side?.logoUrl != null && side!.logoUrl!.isNotEmpty) {
-      return RemoteLogo(url: side.logoUrl, name: side.name, size: 36);
+      return RemoteLogo(url: side.logoUrl, name: side.name, size: size);
     }
     if (match.leagueLogoUrl != null && match.leagueLogoUrl!.isNotEmpty) {
       return RemoteLogo(
         url: match.leagueLogoUrl,
         name: match.leagueName.isEmpty ? match.displayName : match.leagueName,
-        size: 36,
+        size: size,
         cornerRadius: 10,
         lightBadge: true,
       );
     }
     return Container(
-      width: 36,
-      height: 36,
+      width: size,
+      height: size,
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.08),
         shape: BoxShape.circle,
       ),
-      child: const Icon(Icons.sports, size: 20, color: FctvColors.textSecondary),
+      child: Icon(Icons.sports, size: compact ? 14 : 20, color: FctvColors.textSecondary),
     );
   }
 }
@@ -645,6 +707,49 @@ class StreamServerTile extends StatelessWidget {
     // Prevent InkWell from eating the full Wrap row width.
     if (expand) return chip;
     return Align(alignment: Alignment.centerLeft, widthFactor: 1, heightFactor: 1, child: chip);
+  }
+}
+
+/// Horizontal server rail for TV — pick a stream without vertical scroll.
+class StreamServerRail extends StatelessWidget {
+  const StreamServerRail({
+    super.key,
+    required this.servers,
+    required this.activeServerId,
+    required this.onServer,
+    this.matchRegion = '',
+  });
+
+  final List<StreamServer> servers;
+  final String? activeServerId;
+  final ValueChanged<StreamServer> onServer;
+  final String matchRegion;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      itemCount: servers.length,
+      separatorBuilder: (_, __) => const SizedBox(width: 8),
+      itemBuilder: (context, i) {
+        final s = servers[i];
+        return SizedBox(
+          width: 168,
+          child: TvFocusable(
+            onActivate: () => onServer(s),
+            borderRadius: 10,
+            child: StreamServerTile(
+              server: s,
+              active: s.id == activeServerId,
+              matchRegion: matchRegion,
+              expand: true,
+              onTap: () => onServer(s),
+            ),
+          ),
+        );
+      },
+    );
   }
 }
 

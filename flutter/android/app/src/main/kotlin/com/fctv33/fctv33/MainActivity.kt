@@ -1,5 +1,196 @@
 package com.fctv33.fctv33
 
+import android.app.PictureInPictureParams
+import android.app.UiModeManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Configuration
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.util.Rational
+import android.view.WindowManager
+import androidx.core.content.FileProvider
 import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodChannel
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Executors
 
-class MainActivity : FlutterActivity()
+class MainActivity : FlutterActivity() {
+    private val channelName = "com.fctv33.fctv33/platform"
+    private val io = Executors.newSingleThreadExecutor()
+
+    override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
+        super.configureFlutterEngine(flutterEngine)
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "isAndroidTv" -> result.success(isAndroidTv())
+                    "isAndroidEmulator" -> result.success(isAndroidEmulator())
+                    "enterPictureInPicture" -> result.success(enterPip())
+                    "getAppVersion" -> {
+                        try {
+                            val pInfo = if (Build.VERSION.SDK_INT >= 33) {
+                                packageManager.getPackageInfo(
+                                    packageName,
+                                    PackageManager.PackageInfoFlags.of(0),
+                                )
+                            } else {
+                                @Suppress("DEPRECATION")
+                                packageManager.getPackageInfo(packageName, 0)
+                            }
+                            val code = if (Build.VERSION.SDK_INT >= 28) {
+                                pInfo.longVersionCode.toInt()
+                            } else {
+                                @Suppress("DEPRECATION")
+                                pInfo.versionCode
+                            }
+                            result.success(
+                                mapOf(
+                                    "versionCode" to code,
+                                    "versionName" to (pInfo.versionName ?: ""),
+                                ),
+                            )
+                        } catch (e: Exception) {
+                            result.error("version", e.message, null)
+                        }
+                    }
+                    "installApkFromUrl" -> {
+                        val url = call.argument<String>("url")
+                        val fileName = call.argument<String>("fileName") ?: "fctv33-update.apk"
+                        if (url.isNullOrBlank()) {
+                            result.error("bad_args", "url required", null)
+                            return@setMethodCallHandler
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                            !packageManager.canRequestPackageInstalls()
+                        ) {
+                            try {
+                                startActivity(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                                        Uri.parse("package:$packageName"),
+                                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            } catch (_: Exception) {
+                            }
+                            result.error(
+                                "permission",
+                                "Allow installs from this app, then tap Update again.",
+                                null,
+                            )
+                            return@setMethodCallHandler
+                        }
+                        io.execute {
+                            try {
+                                val apk = downloadApk(url, fileName)
+                                runOnUiThread {
+                                    try {
+                                        launchInstaller(apk)
+                                        result.success(null)
+                                    } catch (e: Exception) {
+                                        result.error("install", e.message, null)
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                runOnUiThread {
+                                    result.error("download", e.message ?: "Download failed", null)
+                                }
+                            }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun downloadApk(url: String, fileName: String): File {
+        val dest = File(cacheDir, fileName)
+        if (dest.exists()) dest.delete()
+        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+            instanceFollowRedirects = true
+            connectTimeout = 30_000
+            readTimeout = 120_000
+            requestMethod = "GET"
+            setRequestProperty("User-Agent", "FCTV33-Updater")
+        }
+        conn.inputStream.use { input ->
+            dest.outputStream().use { output -> input.copyTo(output) }
+        }
+        conn.disconnect()
+        if (!dest.exists() || dest.length() < 1024) {
+            throw IllegalStateException("APK download incomplete")
+        }
+        return dest
+    }
+
+    private fun launchInstaller(apk: File) {
+        val uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.fileprovider",
+            apk,
+        )
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        startActivity(intent)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        if (isAndroidTv()) {
+            // TV is landscape-first; keep the leanback shell stable.
+            requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            // System soft IME steals mouse/D-pad on TV emulators — hide it always.
+            window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
+        }
+    }
+
+    private fun isAndroidTv(): Boolean {
+        val uiMode = getSystemService(UI_MODE_SERVICE) as? UiModeManager
+        if (uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+        return packageManager.hasSystemFeature("android.software.leanback")
+    }
+
+    private fun isAndroidEmulator(): Boolean {
+        val fingerprint = Build.FINGERPRINT.lowercase()
+        val model = Build.MODEL.lowercase()
+        val product = Build.PRODUCT.lowercase()
+        val hardware = Build.HARDWARE.lowercase()
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        return fingerprint.contains("generic") ||
+            fingerprint.contains("emulator") ||
+            model.contains("google_sdk") ||
+            model.contains("emulator") ||
+            model.contains("android sdk") ||
+            product.contains("sdk") ||
+            product.contains("emulator") ||
+            product.contains("vbox") ||
+            hardware.contains("goldfish") ||
+            hardware.contains("ranchu") ||
+            manufacturer.contains("genymotion")
+    }
+
+    /** System PiP for phones only — not offered on Android TV. */
+    private fun enterPip(): Boolean {
+        if (isAndroidTv()) return false
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        if (!packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_PICTURE_IN_PICTURE)) {
+            return false
+        }
+        return try {
+            val params = PictureInPictureParams.Builder()
+                .setAspectRatio(Rational(16, 9))
+                .build()
+            enterPictureInPictureMode(params)
+        } catch (_: Exception) {
+            false
+        }
+    }
+}

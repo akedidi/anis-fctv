@@ -9,9 +9,12 @@ import '../../core/api_client.dart';
 import '../../core/models.dart';
 import '../../core/platform.dart';
 import '../../core/theme.dart';
+import '../../shared/tv_search_field.dart';
+import '../../shared/update_button.dart';
 import '../../shared/widgets.dart';
 import '../../web_boot.dart' if (dart.library.io) '../../web_boot_stub.dart';
 import '../player/stream_player.dart';
+import 'tv_detail_layout.dart';
 import '../player/web_hls_surface_stub.dart'
     if (dart.library.html) '../player/web_hls_surface_web.dart';
 
@@ -258,9 +261,10 @@ class _HomePageState extends State<HomePage> {
         list = await _api.fetchLive(sportType: sport);
       }
       if (!mounted || gen != _loadGen) return;
+      _setSportCount(sport, list.length);
+      _applyListUpdate(list);
+      if (!mounted || gen != _loadGen) return;
       setState(() {
-        _matches = list;
-        _setSportCount(sport, list.length);
         _loading = false;
         if (list.isEmpty) _error = 'No events loaded. Tap refresh.';
       });
@@ -296,6 +300,15 @@ class _HomePageState extends State<HomePage> {
           final next = byId.values.toList();
           _sortMatches(next);
           _matches = next;
+          final sel = _selected;
+          if (sel != null) {
+            for (final m in next) {
+              if (m.matchId == sel.matchId) {
+                _selected = _mergeLiveFields(sel, m);
+                break;
+              }
+            }
+          }
           _loading = false;
           if (next.isEmpty) {
             _error = 'No events loaded. Tap refresh.';
@@ -341,27 +354,36 @@ class _HomePageState extends State<HomePage> {
         return hay.contains(_query);
       });
     }
-    return list.toList();
+    final out = list.toList();
+    final sel = _selected;
+    if (sel != null && !out.any((m) => m.matchId == sel.matchId)) {
+      out.insert(0, sel);
+    }
+    return out;
   }
 
   Future<void> _openMatch(LiveMatch match) async {
-    // Invalidate any in-flight resolve / detail polls from the previous match.
-    _playGen++;
-    final refreshGen = ++_detailRefreshGen;
+    final switching = _selected?.matchId != match.matchId;
+    if (switching) {
+      _playGen++;
+      _detailRefreshGen++;
+    }
+    final refreshGen = _detailRefreshGen;
     setState(() {
       _selected = match;
       _mini = false;
-      _playableUrl = null;
-      _activeServerId = null;
+      if (switching) {
+        _playableUrl = null;
+        _activeServerId = null;
+        _events = _seedHighlights(match);
+        _homeLineup = [];
+        _awayLineup = [];
+        _stats = [];
+      }
       _tab = 0;
       _resolving = false;
       _detailLoading = true;
       _error = null;
-      // Seed like iOS until `/api/match/event` returns the full timeline.
-      _events = _seedHighlights(match);
-      _homeLineup = [];
-      _awayLineup = [];
-      _stats = [];
       _h2h = const H2HSummary();
       // Live list already carries channels (iOS field-2) — show them before detail returns.
       _servers = match.streams;
@@ -407,9 +429,9 @@ class _HomePageState extends State<HomePage> {
       }
       if (_stats.isEmpty) unawaited(_loadStats(merged, refreshGen));
       // Don't await playback — keep Overview events / polls responsive.
-      if (list.isNotEmpty) {
+      if (list.isNotEmpty && (switching || _playableUrl == null)) {
         unawaited(_playServer(merged, list.first));
-      } else if (match.hasStreams || merged.hasStreams) {
+      } else if ((match.hasStreams || merged.hasStreams) && _playableUrl == null) {
         unawaited(_recoverServersLater(match, refreshGen));
       }
       _startDetailAutoRefresh(match, refreshGen);
@@ -845,8 +867,6 @@ class _HomePageState extends State<HomePage> {
     }
     setState(() {
       _sportType = type;
-      _matches = [];
-      _selected = null;
       _error = null;
     });
     _load();
@@ -867,7 +887,7 @@ class _HomePageState extends State<HomePage> {
     final phone = layout == _ShellLayout.phone;
     final list = _filtered;
     final liveCount = _matches.where((m) => m.isCurrentlyLive).length;
-    final listPaneWidth = width >= 1200 ? 420.0 : 380.0;
+    final listPaneWidth = isAndroidTv ? 300.0 : (width >= 1200 ? 420.0 : 380.0);
 
     final left = _LeftPane(
       compact: phone,
@@ -1117,36 +1137,58 @@ class _LeftPane extends StatelessWidget {
             child: Row(
               children: [
                 Container(
-                  width: 40,
-                  height: 40,
+                  width: isAndroidTv ? 32 : 40,
+                  height: isAndroidTv ? 32 : 40,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(11),
+                    borderRadius: BorderRadius.circular(isAndroidTv ? 9 : 11),
                     gradient: const LinearGradient(colors: [FctvColors.accent, Color(0xFFFF6B01)]),
                   ),
-                  child: const Text('F', style: TextStyle(color: Colors.black, fontWeight: FontWeight.w900, fontSize: 19)),
+                  child: Text(
+                    'F',
+                    style: TextStyle(
+                      color: Colors.black,
+                      fontWeight: FontWeight.w900,
+                      fontSize: isAndroidTv ? 16 : 19,
+                    ),
+                  ),
                 ),
-                const SizedBox(width: 12),
-                const Expanded(
+                SizedBox(width: isAndroidTv ? 8 : 12),
+                Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('FCTV33', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 20, letterSpacing: 1.2)),
-                      Text('Live Sports · BY ANIS', style: TextStyle(color: FctvColors.textSecondary, fontSize: 12)),
+                      Text(
+                        'FCTV33',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: isAndroidTv ? 16 : 20,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      Text(
+                        'Live Sports · BY ANIS',
+                        style: TextStyle(
+                          color: FctvColors.textSecondary,
+                          fontSize: isAndroidTv ? 10 : 12,
+                        ),
+                      ),
                     ],
                   ),
                 ),
+                const AppUpdateButton(),
                 IconButton(
                   tooltip: 'Refresh',
+                  visualDensity: isAndroidTv ? VisualDensity.compact : VisualDensity.standard,
                   onPressed: loading ? null : onRefresh,
-                  icon: const Icon(Icons.refresh_rounded),
+                  icon: Icon(Icons.refresh_rounded, size: isAndroidTv ? 22 : 24),
                 ),
               ],
             ),
           ),
         ),
         Padding(
-          padding: const EdgeInsets.fromLTRB(8, 6, 8, 14),
+          padding: EdgeInsets.fromLTRB(8, isAndroidTv ? 2 : 6, 8, isAndroidTv ? 8 : 14),
           child: Row(
             children: [
               for (final s in primarySports)
@@ -1156,6 +1198,7 @@ class _LeftPane extends StatelessWidget {
                     label: s.label,
                     active: sportType == s.type,
                     badge: badgeForSport(s.type),
+                    compact: isAndroidTv,
                     onTap: () => onSport(s.type),
                   ),
                 ),
@@ -1165,6 +1208,7 @@ class _LeftPane extends StatelessWidget {
                   label: 'More',
                   active: ancillarySelected,
                   badge: moreBadge,
+                  compact: isAndroidTv,
                   onTap: onShowMoreSports,
                 ),
               ),
@@ -1173,17 +1217,22 @@ class _LeftPane extends StatelessWidget {
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
-          child: TextField(
-            controller: searchCtrl,
-            decoration: InputDecoration(
-              hintText: 'Search teams, leagues…',
-              prefixIcon: const Icon(Icons.search_rounded, size: 20, color: FctvColors.textMuted),
-              filled: true,
-              fillColor: Colors.white.withValues(alpha: 0.06),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            ),
-          ),
+          child: isAndroidTv
+              ? TvSearchField(controller: searchCtrl)
+              : TextField(
+                  controller: searchCtrl,
+                  decoration: InputDecoration(
+                    hintText: 'Search teams, leagues…',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 20, color: FctvColors.textMuted),
+                    filled: true,
+                    fillColor: Colors.white.withValues(alpha: 0.06),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
@@ -1227,14 +1276,15 @@ class _LeftPane extends StatelessWidget {
                 )
               else
                 ListView.separated(
-                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 100),
+                  padding: EdgeInsets.fromLTRB(isAndroidTv ? 8 : 12, 4, isAndroidTv ? 8 : 12, 100),
                   itemCount: matches.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 8),
+                  separatorBuilder: (_, __) => SizedBox(height: isAndroidTv ? 4 : 8),
                   itemBuilder: (_, i) {
                     final m = matches[i];
                     return MatchRowCard(
                       match: m,
                       selected: selectedId == m.matchId,
+                      compact: isAndroidTv,
                       onTap: () => onOpen(m),
                     );
                   },
@@ -1265,6 +1315,7 @@ class _SportTabButton extends StatelessWidget {
     required this.active,
     required this.onTap,
     this.badge,
+    this.compact = false,
   });
 
   final IconData icon;
@@ -1272,14 +1323,17 @@ class _SportTabButton extends StatelessWidget {
   final bool active;
   final VoidCallback onTap;
   final String? badge;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final circle = compact ? 34.0 : 44.0;
+    final iconSize = compact ? 16.0 : 20.0;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
+        padding: EdgeInsets.symmetric(vertical: compact ? 2 : 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -1288,14 +1342,14 @@ class _SportTabButton extends StatelessWidget {
               children: [
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 180),
-                  width: 44,
-                  height: 44,
+                  width: circle,
+                  height: circle,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
                     color: active ? FctvColors.accent : Colors.white.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, size: 20, color: active ? Colors.black : Colors.white),
+                  child: Icon(icon, size: iconSize, color: active ? Colors.black : Colors.white),
                 ),
                 if (badge != null)
                   Positioned(
@@ -1309,19 +1363,23 @@ class _SportTabButton extends StatelessWidget {
                       ),
                       child: Text(
                         badge!,
-                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.white),
+                        style: TextStyle(
+                          fontSize: compact ? 8 : 10,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
                       ),
                     ),
                   ),
               ],
             ),
-            const SizedBox(height: 5),
+            SizedBox(height: compact ? 3 : 5),
             Text(
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: 11,
+                fontSize: compact ? 9 : 11,
                 fontWeight: FontWeight.w600,
                 color: active ? Colors.white : FctvColors.textSecondary,
               ),
@@ -1764,6 +1822,33 @@ class _DetailPane extends StatelessWidget {
       ],
     );
 
+    if (isAndroidTv && !compact && !mini && !hideInline) {
+      final homeName = home?.name ?? 'Home';
+      final awayName = away?.name ?? 'Away';
+      final tvTabBody = switch (tab) {
+        1 => _DetailCard(
+            child: _Lineups(home: homeLineup, away: awayLineup, homeName: home?.name, awayName: away?.name),
+          ),
+        2 => _StatsTab(stats: stats, homeName: homeName, awayName: awayName, compact: true),
+        3 => _H2HTab(h2h: h2h, homeName: homeName),
+        _ => _Overview(match: match, events: events, serverCount: servers.length),
+      };
+      return TvDetailLayout(
+        match: match,
+        servers: servers,
+        activeServerId: activeServerId,
+        resolving: resolving,
+        tab: tab,
+        onTab: onTab,
+        onServer: onServer,
+        tabBody: tvTabBody,
+        player: ClipRRect(
+          borderRadius: BorderRadius.circular(12),
+          child: playerWidget,
+        ),
+      );
+    }
+
     // iOS-like phone: player chrome fixed on top, content scrolls under.
     if (compact) {
       return Column(
@@ -1822,14 +1907,15 @@ class _DetailPane extends StatelessWidget {
 }
 
 class _DetailCard extends StatelessWidget {
-  const _DetailCard({required this.child});
+  const _DetailCard({required this.child, this.padding = 16});
   final Widget child;
+  final double padding;
 
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.all(padding),
       decoration: BoxDecoration(
         color: FctvColors.surface.withValues(alpha: 0.85),
         borderRadius: BorderRadius.circular(16),
@@ -2114,10 +2200,16 @@ class _Lineups extends StatelessWidget {
 }
 
 class _StatsTab extends StatelessWidget {
-  const _StatsTab({required this.stats, required this.homeName, required this.awayName});
+  const _StatsTab({
+    required this.stats,
+    required this.homeName,
+    required this.awayName,
+    this.compact = false,
+  });
   final List<MatchStatRow> stats;
   final String homeName;
   final String awayName;
+  final bool compact;
 
   static const _awayColor = Color(0xFF81C784);
 
@@ -2143,46 +2235,99 @@ class _StatsTab extends StatelessWidget {
         ? stats
         : stats.where((s) => s != possession).toList(growable: false);
 
+    final nameSize = compact ? 13.0 : 17.0;
+    final rowGap = compact ? 8.0 : 14.0;
+
+    Widget statRows;
+    if (compact && barStats.length > 4) {
+      final half = (barStats.length / 2).ceil();
+      final left = barStats.sublist(0, half);
+      final right = barStats.sublist(half);
+      statRows = Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              children: [
+                for (var i = 0; i < left.length; i++) ...[
+                  if (i > 0) SizedBox(height: rowGap),
+                  _StatRow(stat: left[i], awayColor: _awayColor, compact: true),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              children: [
+                for (var i = 0; i < right.length; i++) ...[
+                  if (i > 0) SizedBox(height: rowGap),
+                  _StatRow(stat: right[i], awayColor: _awayColor, compact: true),
+                ],
+              ],
+            ),
+          ),
+        ],
+      );
+    } else {
+      statRows = Column(
+        children: [
+          for (var i = 0; i < barStats.length; i++) ...[
+            if (i > 0) SizedBox(height: rowGap),
+            _StatRow(stat: barStats[i], awayColor: _awayColor, compact: compact),
+          ],
+        ],
+      );
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionLabel('Match stats'),
+        if (!compact) const _SectionLabel('Match stats'),
         _DetailCard(
+          padding: compact ? 10 : 16,
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.only(bottom: 14),
+                padding: EdgeInsets.only(bottom: compact ? 8 : 14),
                 child: Row(
                   children: [
                     Expanded(
                       child: Text(
                         homeName,
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17, height: 1.2, color: FctvColors.accent),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: nameSize,
+                          height: 1.2,
+                          color: FctvColors.accent,
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         awayName,
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.end,
-                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 17, height: 1.2, color: _awayColor),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: nameSize,
+                          height: 1.2,
+                          color: _awayColor,
+                        ),
                       ),
                     ),
                   ],
                 ),
               ),
               if (possession != null) ...[
-                _PossessionDonut(stat: possession, awayColor: _awayColor),
-                const SizedBox(height: 18),
+                _PossessionDonut(stat: possession, awayColor: _awayColor, size: compact ? 96 : 148),
+                SizedBox(height: compact ? 10 : 18),
               ],
-              for (var i = 0; i < barStats.length; i++) ...[
-                if (i > 0) const SizedBox(height: 14),
-                _StatRow(stat: barStats[i], awayColor: _awayColor),
-              ],
+              statRows,
             ],
           ),
         ),
@@ -2193,9 +2338,10 @@ class _StatsTab extends StatelessWidget {
 
 /// Circular possession chart (home / away) — numbers + visual like iOS detail.
 class _PossessionDonut extends StatelessWidget {
-  const _PossessionDonut({required this.stat, required this.awayColor});
+  const _PossessionDonut({required this.stat, required this.awayColor, this.size = 148});
   final MatchStatRow stat;
   final Color awayColor;
+  final double size;
 
   @override
   Widget build(BuildContext context) {
@@ -2213,15 +2359,15 @@ class _PossessionDonut extends StatelessWidget {
             fontWeight: FontWeight.w700,
           ),
         ),
-        const SizedBox(height: 12),
+        SizedBox(height: size < 120 ? 6 : 12),
         SizedBox(
-          width: 148,
-          height: 148,
+          width: size,
+          height: size,
           child: Stack(
             alignment: Alignment.center,
             children: [
               CustomPaint(
-                size: const Size(148, 148),
+                size: Size(size, size),
                 painter: _DonutPainter(
                   homeDegrees: homeSweep,
                   homeColor: FctvColors.accent,
@@ -2301,9 +2447,10 @@ class _DonutPainter extends CustomPainter {
 }
 
 class _StatRow extends StatelessWidget {
-  const _StatRow({required this.stat, required this.awayColor});
+  const _StatRow({required this.stat, required this.awayColor, this.compact = false});
   final MatchStatRow stat;
   final Color awayColor;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -2312,40 +2459,45 @@ class _StatRow extends StatelessWidget {
     final total = (home + away).clamp(1, double.infinity);
     final homeRatio = home / total;
     final awayRatio = away / total;
+    final numSize = compact ? 12.0 : 14.0;
+    final labelSize = compact ? 10.0 : 12.0;
+    final barH = compact ? 6.0 : 8.0;
     return Column(
       children: [
         Row(
           children: [
             SizedBox(
-              width: 44,
+              width: compact ? 36 : 44,
               child: Text(
                 stat.format(stat.home),
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
               ),
             ),
             Expanded(
               child: Text(
                 stat.label,
                 textAlign: TextAlign.center,
-                style: const TextStyle(color: FctvColors.textSecondary, fontSize: 12, fontWeight: FontWeight.w600),
+                maxLines: compact ? 1 : 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: FctvColors.textSecondary, fontSize: labelSize, fontWeight: FontWeight.w600),
               ),
             ),
             SizedBox(
-              width: 44,
+              width: compact ? 36 : 44,
               child: Text(
                 stat.format(stat.away),
                 textAlign: TextAlign.end,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 7),
+        SizedBox(height: compact ? 4 : 7),
         // Comparison chart bar (numbers above) — same layout as native iOS.
         ClipRRect(
           borderRadius: BorderRadius.circular(4),
           child: SizedBox(
-            height: 8,
+            height: barH,
             child: Stack(
               fit: StackFit.expand,
               children: [

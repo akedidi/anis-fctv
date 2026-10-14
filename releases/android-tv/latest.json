@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 2,
-  "versionName": "1.0.1",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.1/FCTV33-tv-release.apk",
-  "changelog": "Video playback fix (ExoPlayer), denser match list, TV remote UX.",
-  "publishedAt": "2026-10-13"
+  "versionCode": 3,
+  "versionName": "1.0.2",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.2/FCTV33-tv-release.apk",
+  "changelog": "Keep live playback when changing filters or sports — stream only stops when another match is selected.",
+  "publishedAt": "2026-10-14"
 }
