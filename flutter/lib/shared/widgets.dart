@@ -804,7 +804,7 @@ class StreamServerRail extends StatelessWidget {
   }
 }
 
-/// Multi-column server chips — 2–4 per row depending on width.
+/// Multi-column server chips — 2–4 per row depending on width (or [columns]).
 class StreamServerGrid extends StatelessWidget {
   const StreamServerGrid({
     super.key,
@@ -812,12 +812,20 @@ class StreamServerGrid extends StatelessWidget {
     required this.activeServerId,
     required this.onServer,
     this.matchRegion = '',
+    this.columns,
+    this.firstFocus,
+    this.tvFocus = false,
   });
 
   final List<StreamServer> servers;
   final String? activeServerId;
   final ValueChanged<StreamServer> onServer;
   final String matchRegion;
+  /// When set, force this many columns (e.g. 2 on Android TV).
+  final int? columns;
+  final FocusNode? firstFocus;
+  /// Wrap each chip in [TvFocusable] for D-pad.
+  final bool tvFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -825,28 +833,41 @@ class StreamServerGrid extends StatelessWidget {
       builder: (context, constraints) {
         const gap = 8.0;
         final width = constraints.maxWidth;
-        final cols = width >= 720
-            ? 4
-            : width >= 520
-                ? 3
-                : 2;
+        final cols = columns ??
+            (width >= 720
+                ? 4
+                : width >= 520
+                    ? 3
+                    : 2);
         final tileW = (width - gap * (cols - 1)) / cols;
+        Widget chip(int i) {
+          final s = servers[i];
+          final tile = StreamServerTile(
+            server: s,
+            active: s.id == activeServerId,
+            matchRegion: matchRegion,
+            expand: true,
+            canRequestFocus: !tvFocus,
+            onTap: () => onServer(s),
+          );
+          return SizedBox(
+            width: tileW,
+            child: tvFocus
+                ? TvFocusable(
+                    focusNode: i == 0 ? firstFocus : null,
+                    onActivate: () => onServer(s),
+                    borderRadius: 10,
+                    scale: 1.06,
+                    child: tile,
+                  )
+                : tile,
+          );
+        }
+
         return Wrap(
           spacing: gap,
           runSpacing: gap,
-          children: [
-            for (final s in servers)
-              SizedBox(
-                width: tileW,
-                child: StreamServerTile(
-                  server: s,
-                  active: s.id == activeServerId,
-                  matchRegion: matchRegion,
-                  expand: true,
-                  onTap: () => onServer(s),
-                ),
-              ),
-          ],
+          children: [for (var i = 0; i < servers.length; i++) chip(i)],
         );
       },
     );

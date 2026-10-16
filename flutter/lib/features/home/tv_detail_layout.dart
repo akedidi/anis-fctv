@@ -55,42 +55,42 @@ class TvDetailLayout extends StatelessWidget {
               children: [
                 Expanded(
                   flex: 12,
-                  child: Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        player,
-                        const SizedBox(height: 8),
-                        Text(
-                          resolving ? 'Servers · resolving…' : 'Servers',
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                            fontSize: 13,
-                            color: FctvColors.textSecondary,
-                          ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      player,
+                      const SizedBox(height: 8),
+                      Text(
+                        resolving ? 'Servers · resolving…' : 'Servers',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                          color: FctvColors.textSecondary,
                         ),
-                        const SizedBox(height: 6),
-                        SizedBox(
-                          height: 52,
-                          child: servers.isEmpty
-                              ? const Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    'Loading servers…',
-                                    style: TextStyle(color: FctvColors.textTertiary, fontSize: 13),
-                                  ),
-                                )
-                              : StreamServerRail(
+                      ),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: servers.isEmpty
+                            ? const Align(
+                                alignment: Alignment.topLeft,
+                                child: Text(
+                                  'Loading servers…',
+                                  style: TextStyle(color: FctvColors.textTertiary, fontSize: 13),
+                                ),
+                              )
+                            : SingleChildScrollView(
+                                child: StreamServerGrid(
                                   servers: servers,
                                   activeServerId: activeServerId,
                                   matchRegion: match.region,
                                   onServer: onServer,
+                                  columns: 2,
+                                  tvFocus: true,
                                   firstFocus: firstServerFocus,
                                 ),
-                        ),
-                      ],
-                    ),
+                              ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 12),

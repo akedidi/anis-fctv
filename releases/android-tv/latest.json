@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 4,
-  "versionName": "1.0.3",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk",
-  "changelog": "New app icon and in-app brand mark. Smaller ARM-only TV APK. Servers under the player, Enter on controls, format sheet fits the video.",
+  "versionCode": 5,
+  "versionName": "1.0.4",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.4/fctv-tv-1.0.4.apk",
+  "changelog": "Servers in a 2-column grid under the player. New app icon and brand mark.",
   "publishedAt": "2026-10-16"
 }
