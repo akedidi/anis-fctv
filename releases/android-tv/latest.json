@@ -2,7 +2,7 @@
   "channel": "android-tv",
   "versionCode": 4,
   "versionName": "1.0.3",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/FCTV33-tv-release.apk",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk",
   "changelog": "Smaller TV APK (ARM only). Servers sit under the player, Enter activates player controls, and the format sheet stays inside the video.",
   "publishedAt": "2026-10-16"
 }
