@@ -150,6 +150,49 @@ class MainActivity : FlutterActivity() {
             // System soft IME steals mouse/D-pad on TV emulators — hide it always.
             window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN)
         }
+        // After a successful sideload, the new process starts with a higher versionCode.
+        // Drop leftover updater APKs from cache (installer does not delete them).
+        maybeClearUpdateApkCache()
+    }
+
+    private fun currentVersionCode(): Int {
+        return try {
+            val pInfo = if (Build.VERSION.SDK_INT >= 33) {
+                packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
+            } else {
+                @Suppress("DEPRECATION")
+                packageManager.getPackageInfo(packageName, 0)
+            }
+            if (Build.VERSION.SDK_INT >= 28) pInfo.longVersionCode.toInt()
+            else {
+                @Suppress("DEPRECATION")
+                pInfo.versionCode
+            }
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    private fun maybeClearUpdateApkCache() {
+        val prefs = getSharedPreferences("fctv_updater", MODE_PRIVATE)
+        val current = currentVersionCode()
+        if (current <= 0) return
+        val previous = prefs.getInt("last_launched_version_code", 0)
+        if (previous > 0 && current > previous) {
+            clearUpdateApks()
+        }
+        if (current != previous) {
+            prefs.edit().putInt("last_launched_version_code", current).apply()
+        }
+    }
+
+    private fun clearUpdateApks() {
+        val dirs = listOfNotNull(cacheDir, externalCacheDir)
+        for (dir in dirs) {
+            dir.listFiles()
+                ?.filter { it.isFile && it.name.endsWith(".apk", ignoreCase = true) }
+                ?.forEach { runCatching { it.delete() } }
+        }
     }
 
     private fun isAndroidTv(): Boolean {

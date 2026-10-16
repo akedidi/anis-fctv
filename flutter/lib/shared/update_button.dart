@@ -56,23 +56,68 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
 
     final go = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: FctvColors.surfaceElevated,
-        title: Text('Update to ${info.versionName}'),
-        content: Text(
+      barrierDismissible: !isAndroidTv,
+      builder: (ctx) {
+        final body = Text(
           info.changelog.isEmpty
               ? 'A new ${info.channel} build is available. Download and install?'
               : info.changelog,
           style: const TextStyle(color: FctvColors.textSecondary, height: 1.35),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Update'),
+        );
+        if (!isAndroidTv) {
+          return AlertDialog(
+            backgroundColor: FctvColors.surfaceElevated,
+            title: Text('Update to ${info.versionName}'),
+            content: body,
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
+              FilledButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                child: const Text('Update'),
+              ),
+            ],
+          );
+        }
+        // TV: Material dialog actions are not D-pad friendly — use TvFocusable.
+        return FocusScope(
+          autofocus: true,
+          child: AlertDialog(
+            backgroundColor: FctvColors.surfaceElevated,
+            title: Text('Update to ${info.versionName}'),
+            content: body,
+            actionsAlignment: MainAxisAlignment.end,
+            actions: [
+              TvFocusable(
+                onActivate: () => Navigator.pop(ctx, false),
+                borderRadius: 10,
+                scale: 1.08,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Text('Later', style: TextStyle(fontWeight: FontWeight.w700)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              TvFocusable(
+                autofocus: true,
+                onActivate: () => Navigator.pop(ctx, true),
+                borderRadius: 10,
+                scale: 1.08,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: FctvColors.accent,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Text(
+                    'Update',
+                    style: TextStyle(fontWeight: FontWeight.w800, color: Colors.black),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
     if (go != true || !mounted) return;
 
