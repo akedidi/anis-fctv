@@ -1205,21 +1205,14 @@ class _LeftPane extends StatelessWidget {
             padding: EdgeInsets.fromLTRB(compact ? 14 : 16, 10, 8, 4),
             child: Row(
               children: [
-                Container(
-                  width: isAndroidTv ? 32 : 40,
-                  height: isAndroidTv ? 32 : 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(isAndroidTv ? 9 : 11),
-                    gradient: const LinearGradient(colors: [FctvColors.accent, Color(0xFFFF6B01)]),
-                  ),
-                  child: Text(
-                    'F',
-                    style: TextStyle(
-                      color: Colors.black,
-                      fontWeight: FontWeight.w900,
-                      fontSize: isAndroidTv ? 16 : 19,
-                    ),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(isAndroidTv ? 9 : 11),
+                  child: Image.asset(
+                    'assets/brand/fctv_mark.png',
+                    width: isAndroidTv ? 32 : 40,
+                    height: isAndroidTv ? 32 : 40,
+                    fit: BoxFit.cover,
+                    filterQuality: FilterQuality.high,
                   ),
                 ),
                 SizedBox(width: isAndroidTv ? 8 : 12),

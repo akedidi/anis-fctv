@@ -124,11 +124,9 @@ img {
   width: 42px;
   height: 42px;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent), #ff6b01);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  color: #111;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
   box-shadow: 0 10px 24px rgba(255, 174, 1, 0.25);
 }
 

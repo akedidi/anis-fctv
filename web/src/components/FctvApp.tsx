@@ -367,7 +367,7 @@ export function FctvApp() {
       <aside className="panel-left">
         <div className="brand-bar">
           <div className="brand">
-            <div className="brand-mark">F</div>
+            <img className="brand-mark" src="/fctv-mark.png" alt="FCTV33" width={42} height={42} />
             <div>
               <h1>FCTV33</h1>
               <p>Live Sports · BY ANIS</p>
