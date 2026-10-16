@@ -1,8 +1,8 @@
 {
   "channel": "android-mobile",
-  "versionCode": 2,
-  "versionName": "1.0.1",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.1/FCTV33-mobile-release.apk",
-  "changelog": "Video playback reliability and denser match list.",
-  "publishedAt": "2026-10-13"
+  "versionCode": 7,
+  "versionName": "1.0.6",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.6/fctv-mobile-1.0.6.apk",
+  "changelog": "Same updater as TV: Update button from latest.json, hide when current, clear APK cache after upgrade. New app icon and brand mark.",
+  "publishedAt": "2026-10-16"
 }
