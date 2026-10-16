@@ -41,8 +41,12 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     final info = await _service.checkForUpdate();
     if (!mounted) return;
     setState(() {
+      // null ⇒ already on latest (or check failed) ⇒ hide the button
       _update = info;
-      _status = null;
+      if (info == null) {
+        _busy = false;
+        _status = null;
+      }
     });
   }
 
@@ -78,11 +82,20 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     });
     final err = await _service.installUpdate(info);
     if (!mounted) return;
+    if (err == null) {
+      // Installer opened — hide until a newer build appears after relaunch.
+      setState(() {
+        _busy = false;
+        _status = null;
+        _update = null;
+      });
+      return;
+    }
     setState(() {
       _busy = false;
       _status = err;
     });
-    if (err != null && context.mounted) {
+    if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(err), behavior: SnackBarBehavior.floating),
       );
@@ -91,7 +104,8 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
 
   @override
   Widget build(BuildContext context) {
-    if (!_service.isSupported || _update == null) {
+    final update = _update;
+    if (!_service.isSupported || update == null) {
       return const SizedBox.shrink();
     }
 

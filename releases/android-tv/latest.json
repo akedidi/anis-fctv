@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 5,
-  "versionName": "1.0.4",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.4/fctv-tv-1.0.4.apk",
-  "changelog": "Servers in a 2-column grid under the player. New app icon and brand mark.",
+  "versionCode": 6,
+  "versionName": "1.0.5",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.5/fctv-tv-1.0.5.apk",
+  "changelog": "Hide Update when already current. Show “No servers yet” when a match has no streams. Servers in a 2-column grid.",
   "publishedAt": "2026-10-16"
 }

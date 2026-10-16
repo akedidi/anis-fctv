@@ -33,12 +33,19 @@ class AppUpdateInfo {
   factory AppUpdateInfo.fromJson(Map<String, dynamic> json) {
     return AppUpdateInfo(
       channel: (json['channel'] as String?) ?? '',
-      versionCode: (json['versionCode'] as num?)?.toInt() ?? 0,
+      versionCode: _readVersionCode(json['versionCode']),
       versionName: (json['versionName'] as String?) ?? '',
       apkUrl: (json['apkUrl'] as String?) ?? '',
       changelog: (json['changelog'] as String?) ?? '',
     );
   }
+}
+
+int _readVersionCode(Object? raw) {
+  if (raw is int) return raw;
+  if (raw is num) return raw.toInt();
+  if (raw is String) return int.tryParse(raw.trim()) ?? 0;
+  return 0;
 }
 
 class AppVersion {
@@ -69,7 +76,7 @@ class AppUpdateService {
       final raw = await platformChannel.invokeMethod<Map<Object?, Object?>>('getAppVersion');
       if (raw == null) return null;
       return AppVersion(
-        versionCode: (raw['versionCode'] as num?)?.toInt() ?? 0,
+        versionCode: _readVersionCode(raw['versionCode']),
         versionName: (raw['versionName'] as String?) ?? '',
       );
     } catch (_) {
@@ -80,7 +87,22 @@ class AppUpdateService {
   Future<AppUpdateInfo?> fetchLatest() async {
     if (!isSupported) return null;
     try {
-      final res = await http.get(manifestUri).timeout(const Duration(seconds: 12));
+      // Bust CDN/browser caches so we never keep showing a stale "newer" build.
+      final uri = manifestUri.replace(
+        queryParameters: {
+          ...manifestUri.queryParameters,
+          't': '${DateTime.now().millisecondsSinceEpoch}',
+        },
+      );
+      final res = await http
+          .get(
+            uri,
+            headers: const {
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+            },
+          )
+          .timeout(const Duration(seconds: 12));
       if (res.statusCode != 200) return null;
       final map = jsonDecode(res.body);
       if (map is! Map<String, dynamic>) return null;
@@ -92,11 +114,12 @@ class AppUpdateService {
     }
   }
 
-  /// Returns [AppUpdateInfo] when a newer build is available on the repo.
+  /// Returns [AppUpdateInfo] only when the repo build is strictly newer.
   Future<AppUpdateInfo?> checkForUpdate() async {
     final installed = await installedVersion();
     final latest = await fetchLatest();
     if (installed == null || latest == null) return null;
+    if (installed.versionCode <= 0) return null;
     if (latest.versionCode <= installed.versionCode) return null;
     return latest;
   }

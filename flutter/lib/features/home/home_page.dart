@@ -1905,7 +1905,7 @@ class _DetailPane extends StatelessWidget {
         else if (servers.isEmpty)
           const Padding(
             padding: EdgeInsets.symmetric(vertical: 8),
-            child: Text('No streams for this match', style: TextStyle(color: FctvColors.textTertiary)),
+            child: Text('No servers yet', style: TextStyle(color: FctvColors.textTertiary)),
           )
         else
           StreamServerGrid(
@@ -1968,6 +1968,7 @@ class _DetailPane extends StatelessWidget {
         servers: servers,
         activeServerId: activeServerId,
         resolving: resolving,
+        detailLoading: detailLoading,
         tab: tab,
         onTab: onTab,
         onServer: onServer,

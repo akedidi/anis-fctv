@@ -16,6 +16,7 @@ class TvDetailLayout extends StatelessWidget {
     required this.activeServerId,
     required this.player,
     required this.resolving,
+    required this.detailLoading,
     required this.tab,
     required this.tabBody,
     required this.onServer,
@@ -28,6 +29,7 @@ class TvDetailLayout extends StatelessWidget {
   final String? activeServerId;
   final Widget player;
   final bool resolving;
+  final bool detailLoading;
   final int tab;
   final Widget tabBody;
   final ValueChanged<StreamServer> onServer;
@@ -71,11 +73,13 @@ class TvDetailLayout extends StatelessWidget {
                       const SizedBox(height: 6),
                       Expanded(
                         child: servers.isEmpty
-                            ? const Align(
+                            ? Align(
                                 alignment: Alignment.topLeft,
                                 child: Text(
-                                  'Loading servers…',
-                                  style: TextStyle(color: FctvColors.textTertiary, fontSize: 13),
+                                  (detailLoading || match.hasStreams)
+                                      ? 'Loading servers…'
+                                      : 'No servers yet',
+                                  style: const TextStyle(color: FctvColors.textTertiary, fontSize: 13),
                                 ),
                               )
                             : SingleChildScrollView(
