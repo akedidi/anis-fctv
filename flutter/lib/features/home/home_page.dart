@@ -9,6 +9,7 @@ import '../../core/api_client.dart';
 import '../../core/models.dart';
 import '../../core/platform.dart';
 import '../../core/theme.dart';
+import '../../shared/tv_focus.dart';
 import '../../shared/tv_search_field.dart';
 import '../../shared/update_button.dart';
 import '../../shared/widgets.dart';
@@ -36,10 +37,12 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   final _api = FctvApi();
   final _searchCtrl = TextEditingController();
+  final _searchPad = TvSearchPadLink();
   final _playerKey = GlobalKey<StreamPlayerState>();
+  final _firstServerFocus = FocusNode(debugLabel: 'first server');
 
   /// Default sport tab: All (0). Football = 1.
   int _sportType = 0;
@@ -73,6 +76,11 @@ class _HomePageState extends State<HomePage> {
   int _countsGen = 0;
   /// Silent list score/clock poll (same cadence as detail).
   Timer? _listPollTimer;
+  /// Blocks a second system Back that would finish the activity right after
+  /// the fullscreen route is popped.
+  final _rootCanPop = ValueNotifier<bool>(true);
+  Timer? _rootPopGuard;
+  bool _fullscreenPopInFlight = false;
   static const _livePollSeconds = 20;
 
   /// Extra sports merged after primary tabs when browsing "All".
@@ -82,9 +90,11 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _searchCtrl.addListener(() {
       setState(() => _query = _searchCtrl.text.trim().toLowerCase());
     });
+    _searchPad.addListener(_onSearchPad);
     // First paint = shell + empty table skeleton; fetch only after that frame.
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -159,14 +169,49 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  bool _searchWasOpen = false;
+
+  void _onSearchPad() {
+    // Closing the letter pad must absorb the system Back that follows, or the
+    // activity is moved to the background.
+    if (_searchWasOpen && !_searchPad.isOpen) _armRootPopGuard();
+    _searchWasOpen = _searchPad.isOpen;
+    if (mounted) setState(() {});
+  }
+
+  void _armRootPopGuard() {
+    _rootCanPop.value = false;
+    _rootPopGuard?.cancel();
+    _rootPopGuard = Timer(const Duration(milliseconds: 600), () {
+      _fullscreenPopInFlight = false;
+      if (!mounted) return;
+      _rootCanPop.value = true;
+    });
+  }
+
+  /// Swallow the system Back that follows leaving fullscreen or the search pad.
+  @override
+  Future<bool> didPopRoute() async {
+    if (_fullscreen || _searchPad.isOpen || _fullscreenPopInFlight || !_rootCanPop.value) {
+      return true;
+    }
+    return false;
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _listPollTimer?.cancel();
     _listPollTimer = null;
+    _rootPopGuard?.cancel();
+    _rootCanPop.dispose();
     _webFsUnsub?.call();
     _webFsUnsub = null;
     _detailRefreshGen++;
     _searchCtrl.dispose();
+    _firstServerFocus.dispose();
+    _searchPad.removeListener(_onSearchPad);
+    _searchPad.dispose();
     super.dispose();
   }
 
@@ -821,6 +866,7 @@ class _HomePageState extends State<HomePage> {
       DeviceOrientation.landscapeRight,
     ]);
     if (!mounted) return;
+    _fullscreenPopInFlight = false;
     final enterMini = await Navigator.of(context).push<bool>(
       PageRouteBuilder(
         opaque: true,
@@ -830,6 +876,7 @@ class _HomePageState extends State<HomePage> {
           url: _playableUrl,
           loadToken: _loadToken,
           resolving: _resolving,
+          onExit: _exitFullscreen,
         ),
       ),
     );
@@ -841,6 +888,15 @@ class _HomePageState extends State<HomePage> {
         if (supportsMiniPlayer && enterMini == true) _mini = true;
       });
     }
+  }
+
+  /// Pops only the fullscreen route. A following system Back must not finish the activity.
+  void _exitFullscreen(BuildContext routeContext) {
+    if (_fullscreenPopInFlight) return;
+    _fullscreenPopInFlight = true;
+    _armRootPopGuard();
+    final navigator = Navigator.of(routeContext);
+    if (navigator.canPop()) navigator.pop(false);
   }
 
   Future<void> _showMoreSports() async {
@@ -897,6 +953,7 @@ class _HomePageState extends State<HomePage> {
       loading: _loading,
       error: _error,
       searchCtrl: _searchCtrl,
+      searchPad: _searchPad,
       matches: list,
       selectedId: phone ? null : _selected?.matchId,
       badgeForSport: _badgeForSport,
@@ -906,6 +963,7 @@ class _HomePageState extends State<HomePage> {
       onShowMoreSports: _showMoreSports,
       onFilter: (f) => setState(() => _filter = f),
       onOpen: _openMatch,
+      onMoveToFullscreen: () => _playerKey.currentState?.focusFullscreenButton() ?? false,
     );
 
     final detail = _selected == null
@@ -928,6 +986,7 @@ class _HomePageState extends State<HomePage> {
             stats: _stats,
             h2h: _h2h,
             playerKey: _playerKey,
+            firstServerFocus: _firstServerFocus,
             onServer: (s) => _playServer(_selected!, s),
             onTab: _onDetailTab,
             onToggleMini: supportsMiniPlayer ? () => setState(() => _mini = !_mini) : null,
@@ -956,9 +1015,15 @@ class _HomePageState extends State<HomePage> {
     );
 
     return PopScope(
-      canPop: !phone || _selected == null,
+      canPop: !_searchPad.isOpen && (!phone || _selected == null),
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop && phone && _selected != null) _closeDetail();
+        if (didPop) return;
+        if (!_rootCanPop.value) return;
+        if (_searchPad.isOpen) {
+          _searchPad.close();
+          return;
+        }
+        if (phone && _selected != null) _closeDetail();
       },
       child: Scaffold(
         body: shell,
@@ -1096,6 +1161,7 @@ class _LeftPane extends StatelessWidget {
     required this.loading,
     required this.error,
     required this.searchCtrl,
+    this.searchPad,
     required this.matches,
     required this.selectedId,
     required this.badgeForSport,
@@ -1105,6 +1171,7 @@ class _LeftPane extends StatelessWidget {
     required this.onShowMoreSports,
     required this.onFilter,
     required this.onOpen,
+    this.onMoveToFullscreen,
   });
 
   final bool compact;
@@ -1114,6 +1181,7 @@ class _LeftPane extends StatelessWidget {
   final bool loading;
   final String? error;
   final TextEditingController searchCtrl;
+  final TvSearchPadLink? searchPad;
   final List<LiveMatch> matches;
   final int? selectedId;
   final String? Function(int type) badgeForSport;
@@ -1123,6 +1191,7 @@ class _LeftPane extends StatelessWidget {
   final VoidCallback onShowMoreSports;
   final ValueChanged<HomeFilter> onFilter;
   final ValueChanged<LiveMatch> onOpen;
+  final bool Function()? onMoveToFullscreen;
 
   @override
   Widget build(BuildContext context) {
@@ -1177,12 +1246,24 @@ class _LeftPane extends StatelessWidget {
                   ),
                 ),
                 const AppUpdateButton(),
-                IconButton(
-                  tooltip: 'Refresh',
-                  visualDensity: isAndroidTv ? VisualDensity.compact : VisualDensity.standard,
-                  onPressed: loading ? null : onRefresh,
-                  icon: Icon(Icons.refresh_rounded, size: isAndroidTv ? 22 : 24),
-                ),
+                if (isAndroidTv)
+                  TvFocusable(
+                    onActivate: loading ? () {} : onRefresh,
+                    enabled: !loading,
+                    borderRadius: 20,
+                    circle: true,
+                    scale: 1.12,
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(Icons.refresh_rounded, size: 22, color: loading ? Colors.white38 : Colors.white),
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'Refresh',
+                    onPressed: loading ? null : onRefresh,
+                    icon: const Icon(Icons.refresh_rounded, size: 24),
+                  ),
               ],
             ),
           ),
@@ -1218,7 +1299,7 @@ class _LeftPane extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 2, 16, 8),
           child: isAndroidTv
-              ? TvSearchField(controller: searchCtrl)
+              ? TvSearchField(controller: searchCtrl, padLink: searchPad)
               : TextField(
                   controller: searchCtrl,
                   decoration: InputDecoration(
@@ -1286,6 +1367,7 @@ class _LeftPane extends StatelessWidget {
                       selected: selectedId == m.matchId,
                       compact: isAndroidTv,
                       onTap: () => onOpen(m),
+                      onMoveToFullscreen: onMoveToFullscreen,
                     );
                   },
                 ),
@@ -1329,64 +1411,75 @@ class _SportTabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final circle = compact ? 34.0 : 44.0;
     final iconSize = compact ? 16.0 : 20.0;
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Padding(
-        padding: EdgeInsets.symmetric(vertical: compact ? 2 : 4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                AnimatedContainer(
-                  duration: const Duration(milliseconds: 180),
-                  width: circle,
-                  height: circle,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: active ? FctvColors.accent : Colors.white.withValues(alpha: 0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Icon(icon, size: iconSize, color: active ? Colors.black : Colors.white),
+    final content = Padding(
+      padding: EdgeInsets.symmetric(vertical: compact ? 2 : 4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                width: circle,
+                height: circle,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: active ? FctvColors.accent : Colors.white.withValues(alpha: 0.1),
+                  shape: BoxShape.circle,
                 ),
-                if (badge != null)
-                  Positioned(
-                    right: -6,
-                    top: -6,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: FctvColors.live,
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Text(
-                        badge!,
-                        style: TextStyle(
-                          fontSize: compact ? 8 : 10,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                        ),
+                child: Icon(icon, size: iconSize, color: active ? Colors.black : Colors.white),
+              ),
+              if (badge != null)
+                Positioned(
+                  right: -6,
+                  top: -6,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: FctvColors.live,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      badge!,
+                      style: TextStyle(
+                        fontSize: compact ? 8 : 10,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
                       ),
                     ),
                   ),
-              ],
+                ),
+            ],
+          ),
+          SizedBox(height: compact ? 3 : 5),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: compact ? 9 : 11,
+              fontWeight: FontWeight.w600,
+              color: active ? Colors.white : FctvColors.textSecondary,
             ),
-            SizedBox(height: compact ? 3 : 5),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: compact ? 9 : 11,
-                fontWeight: FontWeight.w600,
-                color: active ? Colors.white : FctvColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
+    );
+
+    if (isAndroidTv || compact) {
+      return TvFocusable(
+        onActivate: onTap,
+        borderRadius: 16,
+        scale: 1.1,
+        child: content,
+      );
+    }
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: content,
     );
   }
 }
@@ -1422,11 +1515,23 @@ class _MoreSportsSheet extends StatelessWidget {
                 children: [
                   const Text('Sports', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
                   const Spacer(),
-                  IconButton(
-                    tooltip: 'Close',
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
+                  if (isAndroidTv)
+                    TvFocusable(
+                      onActivate: () => Navigator.pop(context),
+                      borderRadius: 20,
+                      circle: true,
+                      scale: 1.12,
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.close_rounded),
+                      ),
+                    )
+                  else
+                    IconButton(
+                      tooltip: 'Close',
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
                 ],
               ),
             ),
@@ -1434,11 +1539,11 @@ class _MoreSportsSheet extends StatelessWidget {
               child: GridView.builder(
                 controller: scrollController,
                 padding: EdgeInsets.fromLTRB(16, 4, 16, 24 + bottom),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  mainAxisSpacing: 10,
-                  crossAxisSpacing: 10,
-                  childAspectRatio: 0.92,
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: isAndroidTv ? 6 : 3,
+                  mainAxisSpacing: isAndroidTv ? 8 : 10,
+                  crossAxisSpacing: isAndroidTv ? 8 : 10,
+                  childAspectRatio: isAndroidTv ? 1.28 : 0.92,
                 ),
                 itemCount: allSports.length,
                 itemBuilder: (_, i) {
@@ -1446,66 +1551,81 @@ class _MoreSportsSheet extends StatelessWidget {
                   final selected = s.type == selectedType;
                   final count = sportCounts[s.type];
                   final badge = (count != null && count > 0) ? '$count' : null;
-                  return InkWell(
-                    onTap: () => Navigator.pop(context, s.type),
-                    borderRadius: BorderRadius.circular(14),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: selected ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
-                        ),
+                  final iconBox = isAndroidTv ? 28.0 : 56.0;
+                  final tile = Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: selected ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
                       ),
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                      child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Stack(
-                            clipBehavior: Clip.none,
-                            children: [
-                              Container(
-                                width: 56,
-                                height: 56,
-                                alignment: Alignment.center,
-                                decoration: BoxDecoration(
-                                  color: selected ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: Icon(s.icon, size: 26, color: selected ? Colors.black : Colors.white),
+                    ),
+                    padding: EdgeInsets.symmetric(vertical: isAndroidTv ? 4 : 12, horizontal: 4),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              width: iconBox,
+                              height: iconBox,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                color: selected ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
+                                shape: BoxShape.circle,
                               ),
-                              if (badge != null)
-                                Positioned(
-                                  right: -4,
-                                  top: -4,
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: FctvColors.live,
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                    child: Text(
-                                      badge,
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w800,
-                                        color: Colors.white,
-                                      ),
+                              child: Icon(
+                                s.icon,
+                                size: isAndroidTv ? 16 : 26,
+                                color: selected ? Colors.black : Colors.white,
+                              ),
+                            ),
+                            if (badge != null)
+                              Positioned(
+                                right: -4,
+                                top: -4,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                  decoration: BoxDecoration(
+                                    color: FctvColors.live,
+                                    borderRadius: BorderRadius.circular(999),
+                                  ),
+                                  child: Text(
+                                    badge,
+                                    style: const TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
                                     ),
                                   ),
                                 ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            s.label,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                          ),
-                        ],
-                      ),
+                              ),
+                          ],
+                        ),
+                        SizedBox(height: isAndroidTv ? 2 : 8),
+                        Text(
+                          s.label,
+                          textAlign: TextAlign.center,
+                          maxLines: isAndroidTv ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: isAndroidTv ? 11 : 12, fontWeight: FontWeight.w600),
+                        ),
+                      ],
                     ),
+                  );
+                  if (isAndroidTv) {
+                    return TvFocusable(
+                      onActivate: () => Navigator.pop(context, s.type),
+                      borderRadius: 14,
+                      scale: 1.04,
+                      autofocus: i == 0,
+                      child: tile,
+                    );
+                  }
+                  return InkWell(
+                    onTap: () => Navigator.pop(context, s.type),
+                    borderRadius: BorderRadius.circular(14),
+                    child: tile,
                   );
                 },
               ),
@@ -1526,29 +1646,40 @@ class _FilterChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final chip = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+      decoration: BoxDecoration(
+        color: active ? const Color(0x33FFAE01) : Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        children: [
+          if (live) ...[const LiveDot(size: 6), const SizedBox(width: 6)],
+          Text(
+            label,
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+              color: active ? FctvColors.accent : FctvColors.textSecondary,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (isAndroidTv) {
+      return TvFocusable(
+        onActivate: onTap,
+        borderRadius: 999,
+        scale: 1.08,
+        child: chip,
+      );
+    }
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: active ? const Color(0x33FFAE01) : Colors.white.withValues(alpha: 0.06),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          children: [
-            if (live) ...[const LiveDot(size: 6), const SizedBox(width: 6)],
-            Text(
-              label,
-              style: TextStyle(
-                fontWeight: FontWeight.w700,
-                fontSize: 12,
-                color: active ? FctvColors.accent : FctvColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: chip,
     );
   }
 }
@@ -1596,6 +1727,7 @@ class _DetailPane extends StatelessWidget {
     required this.stats,
     required this.h2h,
     required this.playerKey,
+    required this.firstServerFocus,
     required this.onServer,
     required this.onTab,
     this.onToggleMini,
@@ -1620,6 +1752,7 @@ class _DetailPane extends StatelessWidget {
   final List<MatchStatRow> stats;
   final H2HSummary h2h;
   final GlobalKey<StreamPlayerState> playerKey;
+  final FocusNode firstServerFocus;
   final ValueChanged<StreamServer> onServer;
   final ValueChanged<int> onTab;
   final VoidCallback? onToggleMini;
@@ -1733,6 +1866,10 @@ class _DetailPane extends StatelessWidget {
       isFullscreen: fullscreen,
       onTogglePiP: onToggleMini,
       onToggleFullscreen: onFullscreen,
+      onMoveDownToServers: () {
+        if (firstServerFocus.context == null) return;
+        firstServerFocus.requestFocus();
+      },
     );
     // Web keeps the inline player mounted while browser fullscreen owns the <video>.
     final hideInline = mini || (fullscreen && !kIsWeb);
@@ -1841,6 +1978,7 @@ class _DetailPane extends StatelessWidget {
         tab: tab,
         onTab: onTab,
         onServer: onServer,
+        firstServerFocus: firstServerFocus,
         tabBody: tvTabBody,
         player: ClipRRect(
           borderRadius: BorderRadius.circular(12),
@@ -2238,47 +2376,15 @@ class _StatsTab extends StatelessWidget {
     final nameSize = compact ? 13.0 : 17.0;
     final rowGap = compact ? 8.0 : 14.0;
 
-    Widget statRows;
-    if (compact && barStats.length > 4) {
-      final half = (barStats.length / 2).ceil();
-      final left = barStats.sublist(0, half);
-      final right = barStats.sublist(half);
-      statRows = Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              children: [
-                for (var i = 0; i < left.length; i++) ...[
-                  if (i > 0) SizedBox(height: rowGap),
-                  _StatRow(stat: left[i], awayColor: _awayColor, compact: true),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              children: [
-                for (var i = 0; i < right.length; i++) ...[
-                  if (i > 0) SizedBox(height: rowGap),
-                  _StatRow(stat: right[i], awayColor: _awayColor, compact: true),
-                ],
-              ],
-            ),
-          ),
+    // One column on TV: a split row makes labels like "Yellow cards" overflow.
+    final statRows = Column(
+      children: [
+        for (var i = 0; i < barStats.length; i++) ...[
+          if (i > 0) SizedBox(height: rowGap),
+          _StatRow(stat: barStats[i], awayColor: _awayColor, compact: compact),
         ],
-      );
-    } else {
-      statRows = Column(
-        children: [
-          for (var i = 0; i < barStats.length; i++) ...[
-            if (i > 0) SizedBox(height: rowGap),
-            _StatRow(stat: barStats[i], awayColor: _awayColor, compact: compact),
-          ],
-        ],
-      );
-    }
+      ],
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2353,6 +2459,9 @@ class _PossessionDonut extends StatelessWidget {
       children: [
         Text(
           stat.label,
+          textAlign: TextAlign.center,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
           style: const TextStyle(
             color: FctvColors.textSecondary,
             fontSize: 12,
@@ -2377,9 +2486,12 @@ class _PossessionDonut extends StatelessWidget {
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    '${home.round()}% — ${away.round()}%',
-                    style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      '${home.round()}% — ${away.round()}%',
+                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
+                    ),
                   ),
                   const SizedBox(height: 2),
                   const Text(
@@ -2467,27 +2579,35 @@ class _StatRow extends StatelessWidget {
         Row(
           children: [
             SizedBox(
-              width: compact ? 36 : 44,
-              child: Text(
-                stat.format(stat.home),
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
+              width: compact ? 44 : 48,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  stat.format(stat.home),
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
+                ),
               ),
             ),
             Expanded(
               child: Text(
                 stat.label,
                 textAlign: TextAlign.center,
-                maxLines: compact ? 1 : 2,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(color: FctvColors.textSecondary, fontSize: labelSize, fontWeight: FontWeight.w600),
               ),
             ),
             SizedBox(
-              width: compact ? 36 : 44,
-              child: Text(
-                stat.format(stat.away),
-                textAlign: TextAlign.end,
-                style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
+              width: compact ? 44 : 48,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(
+                  stat.format(stat.away),
+                  textAlign: TextAlign.end,
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: numSize),
+                ),
               ),
             ),
           ],
@@ -2630,27 +2750,61 @@ class _FullscreenRoute extends StatelessWidget {
     required this.url,
     required this.loadToken,
     required this.resolving,
+    required this.onExit,
   });
   final GlobalKey<StreamPlayerState> playerKey;
   final String title;
   final String? url;
   final int loadToken;
   final bool resolving;
+  final void Function(BuildContext context) onExit;
+
+  bool _isBackKey(LogicalKeyboardKey key) =>
+      key == LogicalKeyboardKey.goBack ||
+      key == LogicalKeyboardKey.escape ||
+      key == LogicalKeyboardKey.browserBack;
+
+  /// Back leaves fullscreen. The aspect picker closes first when it is open.
+  bool _onBack(BuildContext context) {
+    final player = playerKey.currentState;
+    if (player != null && player.consumeBackToHideControls()) {
+      return true;
+    }
+    onExit(context);
+    return true;
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: SizedBox.expand(
-        child: StreamPlayer(
-          key: playerKey,
-          url: url,
-          loadToken: loadToken,
-          title: title,
-          resolving: resolving,
-          isFullscreen: true,
-          onToggleFullscreen: () => Navigator.of(context).pop(false),
-          onTogglePiP: supportsMiniPlayer ? () => Navigator.of(context).pop(true) : null,
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _onBack(context);
+      },
+      child: Focus(
+        autofocus: true,
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent) return KeyEventResult.ignored;
+          if (_isBackKey(event.logicalKey)) {
+            _onBack(context);
+            return KeyEventResult.handled;
+          }
+          return playerKey.currentState?.handleFullscreenKey(event) ?? KeyEventResult.ignored;
+        },
+        child: Scaffold(
+          backgroundColor: Colors.black,
+          body: SizedBox.expand(
+            child: StreamPlayer(
+              key: playerKey,
+              url: url,
+              loadToken: loadToken,
+              title: title,
+              resolving: resolving,
+              isFullscreen: true,
+              onToggleFullscreen: () => onExit(context),
+              onTogglePiP: supportsMiniPlayer ? () => Navigator.of(context).pop(true) : null,
+            ),
+          ),
         ),
       ),
     );

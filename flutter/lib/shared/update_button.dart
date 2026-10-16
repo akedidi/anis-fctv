@@ -27,7 +27,7 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     super.initState();
     if (_service.isSupported) {
       unawaited(_refresh());
-      _poll = Timer.periodic(const Duration(hours: 6), (_) => unawaited(_refresh()));
+      _poll = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_refresh()));
     }
   }
 
@@ -96,46 +96,60 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     }
 
     final label = _busy ? (_status ?? '…') : 'Update';
-    final child = Material(
-      color: FctvColors.accent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: _busy ? null : _onPressed,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_busy)
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-                )
-              else
-                const Icon(Icons.system_update_alt_rounded, size: 16, color: Colors.black),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                ),
-              ),
-            ],
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (_busy)
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
+            )
+          else
+            const Icon(Icons.system_update_alt_rounded, size: 16, color: Colors.black),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Colors.black,
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
           ),
-        ),
+        ],
       ),
     );
 
     if (isAndroidTv) {
       return Padding(
         padding: const EdgeInsets.only(right: 4),
-        child: TvFocusable(onActivate: _busy ? () {} : _onPressed, borderRadius: 10, child: child),
+        child: TvFocusable(
+          onActivate: _busy ? () {} : _onPressed,
+          enabled: !_busy,
+          borderRadius: 10,
+          scale: 1.1,
+          child: Material(
+            color: FctvColors.accent,
+            borderRadius: BorderRadius.circular(10),
+            child: content,
+          ),
+        ),
       );
     }
-    return Padding(padding: const EdgeInsets.only(right: 4), child: child);
+
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Material(
+        color: FctvColors.accent,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          onTap: _busy ? null : _onPressed,
+          borderRadius: BorderRadius.circular(10),
+          child: content,
+        ),
+      ),
+    );
   }
 }

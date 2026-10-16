@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/country.dart';
 import '../core/models.dart';
+import '../core/platform.dart';
 import '../core/theme.dart';
 import 'tv_focus.dart';
 
@@ -229,23 +231,36 @@ class _Pill extends StatelessWidget {
   }
 }
 
-class MatchRowCard extends StatelessWidget {
+class MatchRowCard extends StatefulWidget {
   const MatchRowCard({
     super.key,
     required this.match,
     required this.selected,
     required this.onTap,
     this.compact = false,
+    this.onMoveToFullscreen,
   });
 
   final LiveMatch match;
   final bool selected;
   final VoidCallback onTap;
+  /// Right from this row. Returns true when focus moved to the video fullscreen button.
+  final bool Function()? onMoveToFullscreen;
   /// Denser row for Android TV / leanback — more matches visible.
   final bool compact;
 
   @override
+  State<MatchRowCard> createState() => _MatchRowCardState();
+}
+
+class _MatchRowCardState extends State<MatchRowCard> {
+  bool _focused = false;
+
+  @override
   Widget build(BuildContext context) {
+    final match = widget.match;
+    final selected = widget.selected;
+    final compact = widget.compact;
     final sides = match.meaningfulContenders;
     final home = sides.isNotEmpty ? sides[0] : null;
     final away = sides.length > 1 ? sides[1] : null;
@@ -254,153 +269,179 @@ class MatchRowCard extends StatelessWidget {
     final isToday = match.isKickoffToday;
     final radius = compact ? 10.0 : 14.0;
     final pad = compact ? const EdgeInsets.fromLTRB(8, 6, 8, 6) : const EdgeInsets.fromLTRB(12, 10, 12, 10);
+    final tv = isAndroidTv || compact;
+
+    final body = Container(
+      padding: pad,
+      decoration: BoxDecoration(
+        color: _focused
+            ? FctvColors.accent.withValues(alpha: 0.18)
+            : selected
+                ? const Color(0x28FFAE01)
+                : FctvColors.surface.withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: _focused
+              ? FctvColors.accent
+              : selected
+                  ? FctvColors.accent.withValues(alpha: 0.7)
+                  : Colors.white.withValues(alpha: 0.06),
+          width: _focused ? 3 : 1,
+        ),
+        boxShadow: _focused
+            ? [
+                BoxShadow(
+                  color: FctvColors.accent.withValues(alpha: 0.45),
+                  blurRadius: 14,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              RemoteLogo(
+                url: match.leagueLogoUrl,
+                name: match.leagueName,
+                size: compact ? 14 : 18,
+                cornerRadius: 4,
+                lightBadge: true,
+              ),
+              SizedBox(width: compact ? 6 : 8),
+              Expanded(
+                child: Text(
+                  match.leagueName.isEmpty
+                      ? (match.region.isEmpty ? 'Competition' : match.region)
+                      : match.leagueName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: FctvColors.textSecondary,
+                    fontSize: compact ? 10 : 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              StatusBadge(match: match),
+            ],
+          ),
+          SizedBox(height: compact ? 5 : 10),
+          if (match.isVersus)
+            Row(
+              children: [
+                _TimeCol(
+                  date: isToday ? null : date,
+                  kickoff: time,
+                  clock: match.isCurrentlyLive ? match.liveClock : null,
+                  finished: match.isFinished,
+                  compact: compact,
+                ),
+                SizedBox(width: compact ? 6 : 8),
+                Expanded(
+                  child: _VersusTeam(
+                    name: home?.name ?? '',
+                    logo: home?.logoUrl,
+                    alignEnd: false,
+                    compact: compact,
+                  ),
+                ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 6),
+                  child: Text(
+                    match.scoreText,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w900,
+                      fontSize: compact ? 12 : 14,
+                      color: match.isFinished ? FctvColors.textTertiary : Colors.white,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: _VersusTeam(
+                    name: away?.name ?? '',
+                    logo: away?.logoUrl,
+                    alignEnd: true,
+                    compact: compact,
+                  ),
+                ),
+              ],
+            )
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                _TimeCol(
+                  date: isToday ? null : date,
+                  kickoff: time,
+                  clock: match.isCurrentlyLive ? match.liveClock : null,
+                  finished: match.isFinished,
+                  compact: compact,
+                ),
+                SizedBox(width: compact ? 8 : 12),
+                _SoloEventLogo(match: match, compact: compact),
+                SizedBox(width: compact ? 8 : 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        match.displayName,
+                        maxLines: compact ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: compact ? 12 : 16),
+                      ),
+                      if (match.scoreText.isNotEmpty && match.scoreText != 'VS') ...[
+                        SizedBox(height: compact ? 2 : 4),
+                        Text(
+                          match.scoreText,
+                          style: TextStyle(
+                            color: FctvColors.textSecondary,
+                            fontWeight: FontWeight.w600,
+                            fontSize: compact ? 10 : 12,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+
+    if (tv) {
+      return TvFocusable(
+        onActivate: widget.onTap,
+        borderRadius: radius,
+        scale: 1.06,
+        onKey: (event) {
+          if (event is! KeyDownEvent || event.logicalKey != LogicalKeyboardKey.arrowRight) {
+            return KeyEventResult.ignored;
+          }
+          if (widget.onMoveToFullscreen?.call() == true) return KeyEventResult.handled;
+          return KeyEventResult.ignored;
+        },
+        child: body,
+      );
+    }
 
     return Material(
-      color: selected ? const Color(0x28FFAE01) : FctvColors.surface.withValues(alpha: 0.92),
+      color: Colors.transparent,
       borderRadius: BorderRadius.circular(radius),
       child: InkWell(
         borderRadius: BorderRadius.circular(radius),
-        onTap: onTap,
-        autofocus: false,
-        canRequestFocus: true,
+        onTap: widget.onTap,
+        onFocusChange: (v) => setState(() => _focused = v),
         focusColor: FctvColors.accent.withValues(alpha: 0.28),
         hoverColor: FctvColors.accent.withValues(alpha: 0.12),
-        child: Builder(
-          builder: (context) {
-            final focused = Focus.of(context).hasFocus;
-            return Container(
-          padding: pad,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: focused
-                  ? FctvColors.accent
-                  : selected
-                      ? FctvColors.accent.withValues(alpha: 0.7)
-                      : Colors.white.withValues(alpha: 0.06),
-              width: focused ? 2 : 1,
-            ),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  RemoteLogo(
-                    url: match.leagueLogoUrl,
-                    name: match.leagueName,
-                    size: compact ? 14 : 18,
-                    cornerRadius: 4,
-                    lightBadge: true,
-                  ),
-                  SizedBox(width: compact ? 6 : 8),
-                  Expanded(
-                    child: Text(
-                      match.leagueName.isEmpty
-                          ? (match.region.isEmpty ? 'Competition' : match.region)
-                          : match.leagueName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: FctvColors.textSecondary,
-                        fontSize: compact ? 10 : 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                  StatusBadge(match: match),
-                ],
-              ),
-              SizedBox(height: compact ? 5 : 10),
-              if (match.isVersus)
-                Row(
-                  children: [
-                    _TimeCol(
-                      date: isToday ? null : date,
-                      kickoff: time,
-                      clock: match.isCurrentlyLive ? match.liveClock : null,
-                      finished: match.isFinished,
-                      compact: compact,
-                    ),
-                    SizedBox(width: compact ? 6 : 8),
-                    Expanded(
-                      child: _VersusTeam(
-                        name: home?.name ?? '',
-                        logo: home?.logoUrl,
-                        alignEnd: false,
-                        compact: compact,
-                      ),
-                    ),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: compact ? 4 : 6),
-                      child: Text(
-                        match.scoreText,
-                        style: TextStyle(
-                          fontWeight: FontWeight.w900,
-                          fontSize: compact ? 12 : 14,
-                          color: match.isFinished ? FctvColors.textTertiary : Colors.white,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: _VersusTeam(
-                        name: away?.name ?? '',
-                        logo: away?.logoUrl,
-                        alignEnd: true,
-                        compact: compact,
-                      ),
-                    ),
-                  ],
-                )
-              else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    _TimeCol(
-                      date: isToday ? null : date,
-                      kickoff: time,
-                      clock: match.isCurrentlyLive ? match.liveClock : null,
-                      finished: match.isFinished,
-                      compact: compact,
-                    ),
-                    SizedBox(width: compact ? 8 : 12),
-                    _SoloEventLogo(match: match, compact: compact),
-                    SizedBox(width: compact ? 8 : 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            match.displayName,
-                            maxLines: compact ? 1 : 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontWeight: FontWeight.w800, fontSize: compact ? 12 : 16),
-                          ),
-                          if (match.scoreText.isNotEmpty && match.scoreText != 'VS') ...[
-                            SizedBox(height: compact ? 2 : 4),
-                            Text(
-                              match.scoreText,
-                              style: TextStyle(
-                                color: FctvColors.textSecondary,
-                                fontWeight: FontWeight.w600,
-                                fontSize: compact ? 10 : 12,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
-        );
-          },
-        ),
+        child: body,
       ),
     );
   }
-
 }
 
 class _TimeCol extends StatelessWidget {
@@ -647,6 +688,8 @@ class StreamServerTile extends StatelessWidget {
     required this.onTap,
     this.matchRegion = '',
     this.expand = false,
+    /// When false, parent (e.g. [TvFocusable]) owns focus — avoids nested focus nodes.
+    this.canRequestFocus = true,
   });
 
   final StreamServer server;
@@ -655,6 +698,7 @@ class StreamServerTile extends StatelessWidget {
   final String matchRegion;
   /// When true, fill the grid cell width (used in multi-column Wrap).
   final bool expand;
+  final bool canRequestFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -669,7 +713,9 @@ class StreamServerTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
+        canRequestFocus: canRequestFocus,
         borderRadius: BorderRadius.circular(10),
+        focusColor: FctvColors.accent.withValues(alpha: 0.28),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),
           width: expand ? double.infinity : null,
@@ -718,12 +764,14 @@ class StreamServerRail extends StatelessWidget {
     required this.activeServerId,
     required this.onServer,
     this.matchRegion = '',
+    this.firstFocus,
   });
 
   final List<StreamServer> servers;
   final String? activeServerId;
   final ValueChanged<StreamServer> onServer;
   final String matchRegion;
+  final FocusNode? firstFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -737,13 +785,16 @@ class StreamServerRail extends StatelessWidget {
         return SizedBox(
           width: 168,
           child: TvFocusable(
+            focusNode: i == 0 ? firstFocus : null,
             onActivate: () => onServer(s),
             borderRadius: 10,
+            scale: 1.06,
             child: StreamServerTile(
               server: s,
               active: s.id == activeServerId,
               matchRegion: matchRegion,
               expand: true,
+              canRequestFocus: false,
               onTap: () => onServer(s),
             ),
           ),

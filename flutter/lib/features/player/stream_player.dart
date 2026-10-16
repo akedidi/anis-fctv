@@ -13,6 +13,25 @@ import '../../shared/tv_focus.dart';
 import 'web_hls_surface_stub.dart'
     if (dart.library.html) 'web_hls_surface_web.dart';
 
+/// Video framing — same options as AnisFlix Android TV.
+enum VideoDisplayMode { original, ratio16x9, ratio4x3, stretch }
+
+extension VideoDisplayModeX on VideoDisplayMode {
+  String get label => switch (this) {
+        VideoDisplayMode.original => 'Original',
+        VideoDisplayMode.ratio16x9 => '16:9',
+        VideoDisplayMode.ratio4x3 => '4:3',
+        VideoDisplayMode.stretch => 'Stretch',
+      };
+
+  IconData get icon => switch (this) {
+        VideoDisplayMode.original => Icons.crop_original,
+        VideoDisplayMode.ratio16x9 => Icons.crop_16_9,
+        VideoDisplayMode.ratio4x3 => Icons.crop_landscape,
+        VideoDisplayMode.stretch => Icons.zoom_out_map,
+      };
+}
+
 /// Stable player surface — keep one [State] across layout changes (fullscreen / panel).
 /// Web uses a native HTML &lt;video&gt; + hls.js (media_kit's CanvasKit surface stays black).
 /// Android TV / emulator use ExoPlayer via [video_player] — media_kit GPU/EGL stays black there.
@@ -29,6 +48,7 @@ class StreamPlayer extends StatefulWidget {
     this.onTogglePiP,
     this.onToggleFullscreen,
     this.onAirPlay,
+    this.onMoveDownToServers,
   });
 
   final String? url;
@@ -41,6 +61,8 @@ class StreamPlayer extends StatefulWidget {
   final VoidCallback? onTogglePiP;
   final VoidCallback? onToggleFullscreen;
   final VoidCallback? onAirPlay;
+  /// Down from the inline format / fullscreen buttons.
+  final VoidCallback? onMoveDownToServers;
 
   @override
   State<StreamPlayer> createState() => StreamPlayerState();
@@ -60,8 +82,13 @@ class StreamPlayerState extends State<StreamPlayer> {
   bool _buffering = false;
   bool _awaitingPlayback = false;
   bool _showCenterChrome = false;
+  bool _showAspectPanel = false;
+  VideoDisplayMode _displayMode = VideoDisplayMode.original;
   Timer? _hideTimer;
   Timer? _playbackWatchdog;
+  final _playFocus = FocusNode(debugLabel: 'fs play');
+  final _aspectFocus = FocusNode(debugLabel: 'fs aspect');
+  final _exitFsFocus = FocusNode(debugLabel: 'fs exit');
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
   /// Emulator VO attempt index (cycles known-working SurfaceView paths).
@@ -116,7 +143,8 @@ class StreamPlayerState extends State<StreamPlayer> {
         debugPrint('FCTV exo error: ${v.errorDescription}');
       }
     });
-    if (v.isPlaying) _bumpAutoHide();
+    // Position ticks must not reset the idle timer — only arm it if it isn't running.
+    if (v.isPlaying && _hideTimer == null) _bumpAutoHide();
   }
 
   Future<void> _disposeExo() async {
@@ -282,6 +310,146 @@ class StreamPlayerState extends State<StreamPlayer> {
     } else if (oldWidget.resolving != widget.resolving) {
       setState(() {});
     }
+    if (!oldWidget.isFullscreen && widget.isFullscreen) {
+      setState(() => _showCenterChrome = true);
+      _bumpAutoHide();
+      _focusFullscreenPlay();
+    }
+  }
+
+  bool get _fullscreenControlFocused =>
+      _playFocus.hasFocus || _aspectFocus.hasFocus || _exitFsFocus.hasFocus;
+
+  void _focusFullscreenPlay() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !widget.isFullscreen || !_showCenterChrome) return;
+      _playFocus.requestFocus();
+    });
+  }
+
+  /// D-pad between play (center) and the corner controls (aspect, exit).
+  KeyEventResult _moveFullscreenControl(LogicalKeyboardKey key) {
+    if (_playFocus.hasFocus) {
+      if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.arrowRight) {
+        (_aspectFocus.context != null ? _aspectFocus : _exitFsFocus).requestFocus();
+        return KeyEventResult.handled;
+      }
+    } else if (_aspectFocus.hasFocus) {
+      if (key == LogicalKeyboardKey.arrowRight) {
+        _exitFsFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowUp) {
+        _playFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+    } else if (_exitFsFocus.hasFocus) {
+      if (key == LogicalKeyboardKey.arrowLeft && _aspectFocus.context != null) {
+        _aspectFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowUp || key == LogicalKeyboardKey.arrowLeft) {
+        _playFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Down from format / fullscreen stays put, or moves to the first server when one exists.
+  KeyEventResult _onInlineControlDown(KeyEvent event) {
+    if (widget.isFullscreen || event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (event.logicalKey != LogicalKeyboardKey.arrowDown) return KeyEventResult.ignored;
+    widget.onMoveDownToServers?.call();
+    return KeyEventResult.handled;
+  }
+  bool focusFullscreenButton() {
+    if (_exitFsFocus.context == null) return false;
+    _exitFsFocus.requestFocus();
+    return true;
+  }
+
+  /// Closes the aspect picker. Back itself leaves fullscreen.
+  bool consumeBackToHideControls() {
+    if (_showAspectPanel) {
+      _closeAspectPanel();
+      return true;
+    }
+    return false;
+  }
+
+  void revealControls() {
+    if (!mounted) return;
+    setState(() => _showCenterChrome = true);
+    _bumpAutoHide();
+  }
+
+  /// Enter / Select on the focused fullscreen control.
+  bool _activateFocusedControl(LogicalKeyboardKey key) {
+    final activate = key == LogicalKeyboardKey.select ||
+        key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.space ||
+        key == LogicalKeyboardKey.gameButtonA;
+    if (!activate) return false;
+    if (_playFocus.hasFocus) {
+      unawaited(togglePlay());
+      return true;
+    }
+    if (_aspectFocus.hasFocus) {
+      _openAspectPanel();
+      _bumpAutoHide();
+      return true;
+    }
+    if (_exitFsFocus.hasFocus) {
+      widget.onToggleFullscreen?.call();
+      return true;
+    }
+    return false;
+  }
+
+  /// Keys while fullscreen chrome is hidden (or media keys).
+  KeyEventResult handleFullscreenKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    if (_showAspectPanel) return KeyEventResult.ignored;
+
+    final revealKeys = event.logicalKey == LogicalKeyboardKey.select ||
+        event.logicalKey == LogicalKeyboardKey.enter ||
+        event.logicalKey == LogicalKeyboardKey.space ||
+        event.logicalKey == LogicalKeyboardKey.gameButtonA ||
+        event.logicalKey == LogicalKeyboardKey.arrowUp ||
+        event.logicalKey == LogicalKeyboardKey.arrowDown ||
+        event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+        event.logicalKey == LogicalKeyboardKey.arrowRight;
+
+    if (widget.isFullscreen && !_showCenterChrome && revealKeys) {
+      revealControls();
+      _focusFullscreenPlay();
+      return KeyEventResult.handled;
+    }
+    // Any remote activity while chrome is up restarts the 2s idle hide.
+    if (widget.isFullscreen && _showCenterChrome && revealKeys) {
+      _bumpAutoHide();
+      final arrows = event.logicalKey == LogicalKeyboardKey.arrowUp ||
+          event.logicalKey == LogicalKeyboardKey.arrowDown ||
+          event.logicalKey == LogicalKeyboardKey.arrowLeft ||
+          event.logicalKey == LogicalKeyboardKey.arrowRight;
+      if (arrows) {
+        if (!_fullscreenControlFocused) {
+          _focusFullscreenPlay();
+          return KeyEventResult.handled;
+        }
+        return _moveFullscreenControl(event.logicalKey);
+      }
+      if (_activateFocusedControl(event.logicalKey)) return KeyEventResult.handled;
+    }
+
+    if (event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
+        event.logicalKey == LogicalKeyboardKey.mediaPlay ||
+        event.logicalKey == LogicalKeyboardKey.mediaPause) {
+      unawaited(togglePlay());
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
   }
 
   Future<void> _openIfNeeded(
@@ -557,11 +725,18 @@ class StreamPlayerState extends State<StreamPlayer> {
   }
 
   void _bumpAutoHide() {
-    if (isAndroidTv) return;
+    // TV keeps inline controls visible; auto-hide only in fullscreen.
+    if (isAndroidTv && !widget.isFullscreen) return;
     _hideTimer?.cancel();
-    if (!_showCenterChrome || widget.url == null || _waitingForStream) return;
-    _hideTimer = Timer(const Duration(seconds: 4), () {
-      if (!mounted || !_playing || _waitingForStream) return;
+    _hideTimer = null;
+    if (!_showCenterChrome || _showAspectPanel || widget.url == null || _waitingForStream) {
+      return;
+    }
+    final delay = widget.isFullscreen ? const Duration(seconds: 2) : const Duration(seconds: 4);
+    _hideTimer = Timer(delay, () {
+      _hideTimer = null;
+      if (!mounted || _waitingForStream || _showAspectPanel) return;
+      if (!widget.isFullscreen && !_playing) return;
       setState(() => _showCenterChrome = false);
     });
   }
@@ -570,6 +745,9 @@ class StreamPlayerState extends State<StreamPlayer> {
   void dispose() {
     _hideTimer?.cancel();
     _playbackWatchdog?.cancel();
+    _playFocus.dispose();
+    _aspectFocus.dispose();
+    _exitFsFocus.dispose();
     _playingSub?.cancel();
     _bufferingSub?.cancel();
     _exo?.removeListener(_onExoUpdate);
@@ -615,21 +793,55 @@ class StreamPlayerState extends State<StreamPlayer> {
       if (exo == null || !exo.value.isInitialized) {
         return const SizedBox.expand();
       }
-      return FittedBox(
-        fit: BoxFit.contain,
-        child: SizedBox(
-          width: exo.value.size.width.clamp(1, 4096),
-          height: exo.value.size.height.clamp(1, 4096),
-          child: VideoPlayer(exo),
-        ),
+      final child = SizedBox(
+        width: exo.value.size.width.clamp(1, 4096),
+        height: exo.value.size.height.clamp(1, 4096),
+        child: VideoPlayer(exo),
       );
+      return _DisplayModeBox(mode: _displayMode, child: child);
     }
-    return Video(
+    final fit = switch (_displayMode) {
+      VideoDisplayMode.original => BoxFit.contain,
+      VideoDisplayMode.stretch => BoxFit.fill,
+      VideoDisplayMode.ratio16x9 || VideoDisplayMode.ratio4x3 => BoxFit.cover,
+    };
+    final video = Video(
       controller: _controller!,
       controls: NoVideoControls,
-      fit: BoxFit.contain,
+      fit: fit,
       fill: Colors.transparent,
     );
+    return switch (_displayMode) {
+      VideoDisplayMode.ratio16x9 => Center(
+          child: AspectRatio(aspectRatio: 16 / 9, child: video),
+        ),
+      VideoDisplayMode.ratio4x3 => Center(
+          child: AspectRatio(aspectRatio: 4 / 3, child: video),
+        ),
+      _ => video,
+    };
+  }
+
+  void _openAspectPanel() {
+    _hideTimer?.cancel();
+    setState(() {
+      _showAspectPanel = true;
+      _showCenterChrome = true;
+    });
+  }
+
+  void _closeAspectPanel() {
+    if (!_showAspectPanel) return;
+    setState(() => _showAspectPanel = false);
+    _bumpAutoHide();
+  }
+
+  void _selectDisplayMode(VideoDisplayMode mode) {
+    setState(() {
+      _displayMode = mode;
+      _showAspectPanel = false;
+    });
+    _bumpAutoHide();
   }
 
   @override
@@ -724,6 +936,25 @@ class StreamPlayerState extends State<StreamPlayer> {
                       ),
                     ),
                   ),
+                if (isAndroidTv)
+                  Center(
+                    child: FocusTraversalOrder(
+                      order: const NumericFocusOrder(1),
+                      child: TvFocusIconButton(
+                        focusNode: widget.isFullscreen ? _playFocus : null,
+                        tooltip: _playing ? 'Pause' : 'Play',
+                        icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                        onPressed: () {
+                          unawaited(togglePlay());
+                          _bumpAutoHide();
+                        },
+                        primary: true,
+                        diameter: widget.isFullscreen ? 64 : 52,
+                        iconSize: widget.isFullscreen ? 36 : 30,
+                        autofocus: widget.isFullscreen,
+                      ),
+                    ),
+                  ),
                 if (widget.isFullscreen)
                   Positioned(
                     left: 20,
@@ -743,27 +974,46 @@ class StreamPlayerState extends State<StreamPlayer> {
                     ),
                   ),
               ],
-              if (!waiting)
+              // Hide action bar with chrome in fullscreen (auto-hide / Back).
+              if (!waiting && (_showCenterChrome || !widget.isFullscreen))
                 Positioned(
                   right: widget.isFullscreen ? 16 : 10,
                   bottom: widget.isFullscreen ? 16 : 10,
-                  child: _PlayerActionBar(
-                    isFullscreen: widget.isFullscreen,
-                    isMuted: _muted,
-                    isPlaying: _playing,
-                    leanback: isAndroidTv,
-                    onTogglePlay: () => unawaited(togglePlay()),
-                    onToggleMute: toggleMute,
-                    onTogglePiP: (!supportsPictureInPicture)
-                        ? null
-                        : (kIsWeb || widget.onTogglePiP != null)
-                            ? () => unawaited(togglePictureInPicture())
-                            : null,
-                    onToggleFullscreen: widget.onToggleFullscreen,
-                    onAirPlay: supportsAirPlayChrome
-                        ? (widget.onAirPlay ?? () => _defaultAirPlay(context))
-                        : null,
+                  child: FocusTraversalOrder(
+                    order: const NumericFocusOrder(2),
+                    child: _PlayerActionBar(
+                      isFullscreen: widget.isFullscreen,
+                      isMuted: _muted,
+                      isPlaying: _playing,
+                      leanback: isAndroidTv,
+                      displayMode: _displayMode,
+                      onTogglePlay: isAndroidTv ? null : () => unawaited(togglePlay()),
+                      onToggleMute: toggleMute,
+                      onAspectFormat: () {
+                        _openAspectPanel();
+                        _bumpAutoHide();
+                      },
+                      onTogglePiP: (!supportsPictureInPicture)
+                          ? null
+                          : (kIsWeb || widget.onTogglePiP != null)
+                              ? () => unawaited(togglePictureInPicture())
+                              : null,
+                      onToggleFullscreen: widget.onToggleFullscreen,
+                      aspectFocus: isAndroidTv ? _aspectFocus : null,
+                      fullscreenFocus: isAndroidTv ? _exitFsFocus : null,
+                      onControlKey: isAndroidTv && !widget.isFullscreen ? _onInlineControlDown : null,
+                      onAirPlay: supportsAirPlayChrome
+                          ? (widget.onAirPlay ?? () => _defaultAirPlay(context))
+                          : null,
+                    ),
                   ),
+                ),
+              if (_showAspectPanel)
+                _AspectFormatPanel(
+                  selected: _displayMode,
+                  fullscreen: widget.isFullscreen,
+                  onSelected: _selectDisplayMode,
+                  onClose: _closeAspectPanel,
                 ),
             ],
           ],
@@ -773,21 +1023,46 @@ class StreamPlayerState extends State<StreamPlayer> {
 
     if (!isAndroidTv) return surface;
 
-    return Focus(
-      onKeyEvent: (_, event) {
-        if (event is! KeyDownEvent || idleEmpty || waiting) return KeyEventResult.ignored;
-        if (event.logicalKey == LogicalKeyboardKey.select ||
-            event.logicalKey == LogicalKeyboardKey.enter ||
-            event.logicalKey == LogicalKeyboardKey.space ||
-            event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
-            event.logicalKey == LogicalKeyboardKey.mediaPlay ||
-            event.logicalKey == LogicalKeyboardKey.mediaPause) {
-          unawaited(togglePlay());
-          return KeyEventResult.handled;
-        }
-        return KeyEventResult.ignored;
-      },
-      child: surface,
+    // Key handler only — must not join focus traversal (traps D-pad on "empty" chrome).
+    return FocusTraversalGroup(
+      policy: OrderedTraversalPolicy(),
+      child: Focus(
+        canRequestFocus: false,
+        skipTraversal: true,
+        onKeyEvent: (_, event) {
+          if (event is! KeyDownEvent || idleEmpty || waiting) return KeyEventResult.ignored;
+          if (_showAspectPanel) {
+            if (event.logicalKey == LogicalKeyboardKey.goBack ||
+                event.logicalKey == LogicalKeyboardKey.escape ||
+                event.logicalKey == LogicalKeyboardKey.browserBack) {
+              _closeAspectPanel();
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          }
+          // Fullscreen Back is owned by the route PopScope (hide chrome → exit).
+          if (widget.isFullscreen &&
+              (event.logicalKey == LogicalKeyboardKey.goBack ||
+                  event.logicalKey == LogicalKeyboardKey.escape ||
+                  event.logicalKey == LogicalKeyboardKey.browserBack)) {
+            return KeyEventResult.ignored;
+          }
+          if (widget.isFullscreen && _showCenterChrome) {
+            _bumpAutoHide();
+          }
+          if (widget.isFullscreen && !_showCenterChrome) {
+            return handleFullscreenKey(event);
+          }
+          if (event.logicalKey == LogicalKeyboardKey.mediaPlayPause ||
+              event.logicalKey == LogicalKeyboardKey.mediaPlay ||
+              event.logicalKey == LogicalKeyboardKey.mediaPause) {
+            unawaited(togglePlay());
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: surface,
+      ),
     );
   }
 
@@ -812,25 +1087,82 @@ class _PlayerActionBar extends StatelessWidget {
     required this.isMuted,
     required this.isPlaying,
     required this.onToggleMute,
+    required this.displayMode,
     this.leanback = false,
     this.onTogglePlay,
+    this.onAspectFormat,
     this.onTogglePiP,
     this.onToggleFullscreen,
     this.onAirPlay,
+    this.aspectFocus,
+    this.fullscreenFocus,
+    this.onControlKey,
   });
 
   final bool isFullscreen;
   final bool isMuted;
   final bool isPlaying;
   final bool leanback;
+  final VideoDisplayMode displayMode;
   final VoidCallback onToggleMute;
   final VoidCallback? onTogglePlay;
+  final VoidCallback? onAspectFormat;
   final VoidCallback? onTogglePiP;
   final VoidCallback? onToggleFullscreen;
   final VoidCallback? onAirPlay;
+  final FocusNode? aspectFocus;
+  final FocusNode? fullscreenFocus;
+  final KeyEventResult Function(KeyEvent event)? onControlKey;
 
   @override
   Widget build(BuildContext context) {
+    if (leanback) {
+      // Play/pause is centered on the player; corner bar keeps format + fullscreen only.
+      final actions = <Widget>[
+        if (onAspectFormat != null)
+          TvFocusIconButton(
+            focusNode: aspectFocus,
+            onKey: onControlKey,
+            tooltip: 'Aspect format',
+            icon: Icons.aspect_ratio,
+            onPressed: onAspectFormat!,
+            diameter: isFullscreen ? 48 : 36,
+            iconSize: isFullscreen ? 22 : 18,
+            active: displayMode != VideoDisplayMode.original,
+          ),
+        if (onToggleFullscreen != null)
+          TvFocusIconButton(
+            focusNode: fullscreenFocus,
+            onKey: onControlKey,
+            tooltip: isFullscreen ? 'Exit fullscreen' : 'Fullscreen',
+            icon: isFullscreen ? Icons.fullscreen_exit : Icons.fullscreen,
+            onPressed: onToggleFullscreen!,
+            diameter: isFullscreen ? 48 : 36,
+            iconSize: isFullscreen ? 22 : 18,
+          ),
+      ];
+      if (actions.isEmpty) return const SizedBox.shrink();
+      return Material(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(22),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: FocusTraversalGroup(
+            policy: WidgetOrderTraversalPolicy(),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < actions.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 6),
+                  actions[i],
+                ],
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
     return Material(
       color: Colors.black.withValues(alpha: 0.55),
       borderRadius: BorderRadius.circular(22),
@@ -839,17 +1171,18 @@ class _PlayerActionBar extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            if (leanback && onTogglePlay != null)
-              _iconBtn(
-                icon: isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                onPressed: onTogglePlay!,
-                enabled: true,
-              ),
             _iconBtn(
               icon: isMuted ? Icons.volume_off : Icons.volume_up,
               onPressed: onToggleMute,
               enabled: true,
             ),
+            if (onAspectFormat != null)
+              _iconBtn(
+                icon: Icons.aspect_ratio,
+                onPressed: onAspectFormat!,
+                enabled: true,
+                active: displayMode != VideoDisplayMode.original,
+              ),
             if (onTogglePiP != null)
               _iconBtn(icon: Icons.picture_in_picture_alt, onPressed: onTogglePiP!, enabled: true),
             if (onAirPlay != null)
@@ -870,28 +1203,231 @@ class _PlayerActionBar extends StatelessWidget {
     required IconData icon,
     required VoidCallback onPressed,
     required bool enabled,
+    bool active = false,
   }) {
-    if (leanback) {
-      return TvFocusable(
-        onActivate: onPressed,
-        borderRadius: 20,
-        child: Padding(
-          padding: const EdgeInsets.all(8),
-          child: Icon(
-            icon,
-            size: isFullscreen ? 24 : 22,
-            color: enabled ? Colors.white : Colors.white38,
-          ),
-        ),
-      );
-    }
     return IconButton(
       visualDensity: VisualDensity.compact,
+      tooltip: active ? 'Aspect format' : null,
       onPressed: enabled ? onPressed : null,
       icon: Icon(
         icon,
         size: isFullscreen ? 22 : 20,
-        color: Colors.white.withValues(alpha: enabled ? 1 : 0.35),
+        color: !enabled
+            ? Colors.white.withValues(alpha: 0.35)
+            : active
+                ? FctvColors.accent
+                : Colors.white,
+      ),
+    );
+  }
+}
+
+class _DisplayModeBox extends StatelessWidget {
+  const _DisplayModeBox({required this.mode, required this.child});
+
+  final VideoDisplayMode mode;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    switch (mode) {
+      case VideoDisplayMode.original:
+        return FittedBox(
+          fit: BoxFit.contain,
+          clipBehavior: Clip.hardEdge,
+          child: child,
+        );
+      case VideoDisplayMode.stretch:
+        return FittedBox(
+          fit: BoxFit.fill,
+          clipBehavior: Clip.hardEdge,
+          child: child,
+        );
+      case VideoDisplayMode.ratio16x9:
+        return Center(
+          child: AspectRatio(
+            aspectRatio: 16 / 9,
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: child,
+            ),
+          ),
+        );
+      case VideoDisplayMode.ratio4x3:
+        return Center(
+          child: AspectRatio(
+            aspectRatio: 4 / 3,
+            child: FittedBox(
+              fit: BoxFit.cover,
+              clipBehavior: Clip.hardEdge,
+              child: child,
+            ),
+          ),
+        );
+    }
+  }
+}
+
+class _AspectFormatPanel extends StatefulWidget {
+  const _AspectFormatPanel({
+    required this.selected,
+    required this.onSelected,
+    required this.onClose,
+    required this.fullscreen,
+  });
+
+  final VideoDisplayMode selected;
+  final ValueChanged<VideoDisplayMode> onSelected;
+  final VoidCallback onClose;
+  final bool fullscreen;
+
+  @override
+  State<_AspectFormatPanel> createState() => _AspectFormatPanelState();
+}
+
+class _AspectFormatPanelState extends State<_AspectFormatPanel> {
+  final _scopeNode = FocusScopeNode(debugLabel: 'TV aspect panel');
+  final _closeFocusNode = FocusNode(debugLabel: 'aspect close');
+  late final List<FocusNode> _optionNodes = List.generate(
+    VideoDisplayMode.values.length,
+    (index) => FocusNode(debugLabel: 'aspect option $index'),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _scopeNode.requestFocus();
+      final index = VideoDisplayMode.values.indexOf(widget.selected);
+      _optionNodes[index.clamp(0, _optionNodes.length - 1)].requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _scopeNode.dispose();
+    _closeFocusNode.dispose();
+    for (final node in _optionNodes) {
+      node.dispose();
+    }
+    super.dispose();
+  }
+
+  KeyEventResult _handlePanelKey(FocusNode _, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.goBack ||
+        key == LogicalKeyboardKey.escape ||
+        key == LogicalKeyboardKey.browserBack) {
+      widget.onClose();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isTv = isAndroidTv;
+    final compact = !widget.fullscreen;
+    final selectedIndex = VideoDisplayMode.values.indexOf(widget.selected);
+    final modes = VideoDisplayMode.values;
+    return Positioned.fill(
+      child: FocusScope(
+        node: _scopeNode,
+        autofocus: isTv,
+        onKeyEvent: _handlePanelKey,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Inline player is short; keep the sheet inside it and scroll if needed.
+            final maxHeight = compact
+                ? (constraints.maxHeight - 12).clamp(0.0, constraints.maxHeight)
+                : constraints.maxHeight * 0.72;
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: widget.onClose,
+                    child: ColoredBox(color: Colors.black.withValues(alpha: 0.55)),
+                  ),
+                ),
+                Align(
+                  alignment: compact ? Alignment.center : Alignment.bottomCenter,
+                  child: Padding(
+                    padding: EdgeInsets.all(compact ? 6 : 0),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(
+                        maxWidth: compact ? constraints.maxWidth : (isTv ? 560 : double.infinity),
+                        maxHeight: maxHeight,
+                      ),
+                      child: Material(
+                        color: FctvColors.surfaceElevated,
+                        borderRadius: compact
+                            ? BorderRadius.circular(12)
+                            : const BorderRadius.vertical(top: Radius.circular(20)),
+                        clipBehavior: Clip.antiAlias,
+                        child: ListView(
+                          shrinkWrap: true,
+                          padding: EdgeInsets.fromLTRB(compact ? 10 : 20, compact ? 6 : 8, compact ? 10 : 20, compact ? 4 : 24),
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    'Aspect format',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: compact ? 14 : 18,
+                                    ),
+                                  ),
+                                ),
+                                if (isTv)
+                                  TvFocusable(
+                                    focusNode: _closeFocusNode,
+                                    onActivate: widget.onClose,
+                                    borderRadius: 10,
+                                    scale: compact ? 1 : 1.08,
+                                    child: Padding(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: compact ? 8 : 12,
+                                        vertical: compact ? 4 : 8,
+                                      ),
+                                      child: Text(
+                                        'Close',
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                          fontSize: compact ? 12 : null,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  TextButton(onPressed: widget.onClose, child: const Text('Close')),
+                              ],
+                            ),
+                            SizedBox(height: compact ? 4 : 12),
+                            for (var i = 0; i < modes.length; i++)
+                              TvSelectableRow(
+                                focusNode: _optionNodes[i],
+                                autofocus: isTv && i == selectedIndex,
+                                title: modes[i].label,
+                                selected: widget.selected == modes[i],
+                                dense: compact,
+                                leading: Icon(modes[i].icon, size: compact ? 18 : 24),
+                                onPressed: () => widget.onSelected(modes[i]),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

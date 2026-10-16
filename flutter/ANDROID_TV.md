@@ -66,9 +66,12 @@ flutter run -d emulator-5554 \
 ```bash
 cd flutter
 flutter build apk --release \
-  --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev
+  --target-platform android-arm64,android-arm \
+  --dart-define=API_BASE=https://fctv33-api.kedidi-anis.workers.dev \
+  --android-project-arg=fctvAbiFilters=arm64-v8a,armeabi-v7a
 # → build/app/outputs/flutter-apk/app-release.apk
-# → build/android-tv/FCTV33-tv-release.apk
 ```
+
+Same size cut as AnisFlix Android TV: arm64 and armeabi-v7a only. x86 and x86_64 (emulator) are omitted, including `libmpv` copies that media_kit embeds for every ABI.
 
 Same binary as mobile: at runtime TV disables PiP / AirPlay and uses the leanback shell.

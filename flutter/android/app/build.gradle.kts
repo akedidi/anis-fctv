@@ -4,6 +4,17 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+// Override with -PfctvAbiFilters=arm64-v8a,armeabi-v7a (TV and phones).
+// Default drops x86/x86_64 which are emulator-only and inflate the fat APK.
+val fctvAbiFilters: List<String> =
+    (project.findProperty("fctvAbiFilters") as String?)
+        ?.split(",")
+        ?.map { it.trim() }
+        ?.filter { it.isNotEmpty() }
+        ?: listOf("arm64-v8a", "armeabi-v7a")
+
+val allJniAbis = listOf("armeabi", "armeabi-v7a", "arm64-v8a", "x86", "x86_64", "mips", "mips64")
+
 android {
     namespace = "com.fctv33.fctv33"
     compileSdk = flutter.compileSdkVersion
@@ -27,6 +38,11 @@ android {
         // flag during build.
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        ndk {
+            abiFilters.clear()
+            abiFilters += fctvAbiFilters
+        }
     }
 
     buildTypes {
@@ -34,6 +50,19 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
+    // media_kit ships libmpv for every ABI inside its AAR. ndk.abiFilters alone
+    // does not always strip those; packaging excludes guarantee they stay out.
+    packaging {
+        jniLibs {
+            for (abi in allJniAbis) {
+                if (abi !in fctvAbiFilters) {
+                    excludes += "**/lib/$abi/**"
+                    excludes += "**/$abi/*.so"
+                }
+            }
         }
     }
 }

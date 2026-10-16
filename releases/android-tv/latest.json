@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 3,
-  "versionName": "1.0.2",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.2/FCTV33-tv-release.apk",
-  "changelog": "Keep live playback when changing filters or sports — stream only stops when another match is selected.",
-  "publishedAt": "2026-10-14"
+  "versionCode": 4,
+  "versionName": "1.0.3",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/FCTV33-tv-release.apk",
+  "changelog": "Smaller TV APK (ARM only). Servers sit under the player, Enter activates player controls, and the format sheet stays inside the video.",
+  "publishedAt": "2026-10-16"
 }
