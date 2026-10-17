@@ -164,6 +164,9 @@ class StreamPlayerState extends State<StreamPlayer> {
       // Our API always proxies HLS; without this ExoPlayer sniffs and fails.
       formatHint: VideoFormat.hls,
       videoPlayerOptions: VideoPlayerOptions(mixWithOthers: true),
+      // Texture/SurfaceProducer leaves a green overlay on Fire Stick / some Android TV
+      // SoCs (Chromecast often OK). PlatformView renders via a native SurfaceView.
+      viewType: VideoViewType.platformView,
     );
     _exo = controller;
     controller.addListener(_onExoUpdate);
@@ -757,7 +760,8 @@ class StreamPlayerState extends State<StreamPlayer> {
   }
 
   Widget _maybeClip(double radius, Widget child) {
-    if (kIsWeb || radius <= 0) return child;
+    // PlatformView (Exo on TV) ignores Flutter clips and can glitch under ClipRRect.
+    if (kIsWeb || radius <= 0 || _useExo) return child;
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: child,

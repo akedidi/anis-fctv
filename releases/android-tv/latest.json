@@ -3,6 +3,6 @@
   "versionCode": 7,
   "versionName": "1.0.6",
   "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.6/fctv-tv-1.0.6.apk",
-  "changelog": "Clear downloaded update APKs from cache after a successful upgrade. D-pad focus on the Update dialog buttons.",
-  "publishedAt": "2026-10-16"
+  "changelog": "Fix green video overlay on Fire Stick (ExoPlayer platform view). Same 1.0.6 / versionCode 7 rebuild.",
+  "publishedAt": "2026-10-17"
 }
