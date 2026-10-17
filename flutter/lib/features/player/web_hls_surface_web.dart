@@ -13,7 +13,23 @@ external void _fctvDestroyHls();
 @JS('fctvMountPlayer')
 external web.HTMLVideoElement _fctvMountPlayer(web.HTMLElement root, JSAny? opts);
 
+@JS('fctvOnStreamNeedsRefresh')
+external set _fctvOnStreamNeedsRefresh(JSFunction? fn);
+
 web.HTMLVideoElement? _activeVideo;
+VoidCallback? _streamNeedsRefreshHandler;
+
+/// JS HLS watchdog calls this after repeated local reloads fail (expired token, etc.).
+void webBindStreamNeedsRefresh(VoidCallback? handler) {
+  _streamNeedsRefreshHandler = handler;
+  if (handler == null) {
+    _fctvOnStreamNeedsRefresh = null;
+    return;
+  }
+  _fctvOnStreamNeedsRefresh = ((JSAny? _) {
+    _streamNeedsRefreshHandler?.call();
+  }).toJS;
+}
 
 /// Native HTML player shell (video + overlay controls) inside one platform view.
 class WebHlsSurface extends StatefulWidget {

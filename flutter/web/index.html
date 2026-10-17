@@ -302,7 +302,52 @@
   <script>
     (function () {
       window._fctvHls = null;
+      /** Active attach session — timers / listeners cleaned by fctvDestroyHls. */
+      window._fctvHlsSession = null;
+
+      function fctvClearStallRetryTimers(session) {
+        if (!session) return;
+        if (session.stallTimer) {
+          clearTimeout(session.stallTimer);
+          session.stallTimer = null;
+        }
+        if (session.retryTimer) {
+          clearTimeout(session.retryTimer);
+          session.retryTimer = null;
+        }
+      }
+
+      function fctvClearHlsSessionTimers(session) {
+        fctvClearStallRetryTimers(session);
+        if (!session) return;
+        if (session.progressTimer) {
+          clearInterval(session.progressTimer);
+          session.progressTimer = null;
+        }
+      }
+
+      function fctvDetachHlsSessionListeners(session) {
+        if (!session || !session.video || !session._onWaiting) return;
+        try {
+          session.video.removeEventListener('waiting', session._onWaiting);
+          session.video.removeEventListener('stalled', session._onWaiting);
+          session.video.removeEventListener('playing', session._onPlaying);
+          session.video.removeEventListener('timeupdate', session._onTimeUpdate);
+          session.video.removeEventListener('error', session._onVideoError);
+          session.video.removeEventListener('ended', session._onEnded);
+          session.video.removeEventListener('pause', session._onPause);
+          session.video.removeEventListener('play', session._onPlay);
+        } catch (e) {}
+      }
+
       window.fctvDestroyHls = function () {
+        var session = window._fctvHlsSession;
+        if (session) {
+          session.dead = true;
+          fctvClearHlsSessionTimers(session);
+          fctvDetachHlsSessionListeners(session);
+          window._fctvHlsSession = null;
+        }
         if (window._fctvHls) {
           try { window._fctvHls.destroy(); } catch (e) {}
           window._fctvHls = null;
@@ -367,9 +412,19 @@
         return false;
       };
 
+      /**
+       * Attach HLS with automatic recovery when the live stream stalls or fatals.
+       * Soft recover → full reload (same URL) → optional Dart re-resolve callback.
+       */
       window.fctvAttachHls = function (video, url) {
         window.fctvDestroyHls();
         if (!video || !url) return Promise.resolve();
+
+        var STALL_MS = 8000;
+        var SOFT_FATAL_MAX = 3;
+        var RELOAD_BEFORE_REFRESH = 4;
+        var MAX_BACKOFF_MS = 15000;
+
         video.setAttribute('playsinline', 'true');
         video.setAttribute('webkit-playsinline', 'true');
         video.controls = false;
@@ -378,23 +433,219 @@
         video.style.objectFit = 'contain';
         video.style.background = '#000';
         video.style.display = 'block';
-        video.muted = false;
-        video.volume = 1;
-        function tryPlay() {
-          // Prefer audible playback; fall back to muted only if the browser blocks it.
+        if (video._fctvPolicyMuted !== true) {
           video.muted = false;
           video.volume = 1;
+        }
+
+        var session = {
+          video: video,
+          url: url,
+          dead: false,
+          userPaused: false,
+          softFatals: 0,
+          fullReloads: 0,
+          mediaRecovered: false,
+          seenProgress: false,
+          lastMediaTime: 0,
+          stallTimer: null,
+          retryTimer: null,
+          progressTimer: null,
+          firstPlayResolve: null,
+          firstPlayDone: false,
+        };
+        window._fctvHlsSession = session;
+
+        function tryPlay() {
+          if (session.dead || session.userPaused) return Promise.resolve(null);
+          // Prefer audible playback; fall back to muted only if the browser blocks it.
+          if (video._fctvPolicyMuted !== true) {
+            video.muted = false;
+            video.volume = 1;
+          }
           return video.play().catch(function () {
             video.muted = true;
             video._fctvPolicyMuted = true;
             return video.play().catch(function () { return null; });
           });
         }
-        if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
-          video.src = url;
-          return tryPlay();
+
+        function markFirstPlay() {
+          if (session.firstPlayDone) return;
+          session.firstPlayDone = true;
+          if (session.firstPlayResolve) {
+            session.firstPlayResolve(tryPlay());
+            session.firstPlayResolve = null;
+          }
         }
-        if (window.Hls && window.Hls.isSupported()) {
+
+        function backoffMs() {
+          return Math.min(MAX_BACKOFF_MS, 1000 * Math.pow(2, Math.max(0, session.fullReloads - 1)));
+        }
+
+        function requestUpstreamRefresh() {
+          if (typeof window.fctvOnStreamNeedsRefresh === 'function') {
+            try { window.fctvOnStreamNeedsRefresh(session.url); } catch (e) {}
+          }
+        }
+
+        function destroyHlsInstance() {
+          if (window._fctvHls) {
+            try { window._fctvHls.destroy(); } catch (e) {}
+            window._fctvHls = null;
+          }
+        }
+
+        function scheduleFullReload(reason) {
+          if (session.dead || session.retryTimer) return;
+          session.fullReloads += 1;
+          session.softFatals = 0;
+          session.mediaRecovered = false;
+          session.seenProgress = false;
+          session.lastMediaTime = 0;
+          if (session.fullReloads >= RELOAD_BEFORE_REFRESH) {
+            requestUpstreamRefresh();
+          }
+          var delay = backoffMs();
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug('[fctv-hls] full reload #' + session.fullReloads + ' in ' + delay + 'ms (' + reason + ')');
+          }
+          session.retryTimer = setTimeout(function () {
+            session.retryTimer = null;
+            if (session.dead || session.userPaused) return;
+            startSource(false);
+          }, delay);
+        }
+
+        function recoverLiveEdge(hls) {
+          try {
+            if (hls && Number.isFinite(hls.liveSyncPosition)) {
+              video.currentTime = hls.liveSyncPosition;
+              return;
+            }
+          } catch (e) {}
+          try {
+            if (video.seekable && video.seekable.length > 0) {
+              video.currentTime = video.seekable.end(video.seekable.length - 1);
+            }
+          } catch (e) {}
+        }
+
+        function handleStall() {
+          if (session.dead || session.userPaused || video.paused) return;
+          var hls = window._fctvHls;
+          if (typeof console !== 'undefined' && console.debug) {
+            console.debug('[fctv-hls] stall recovery');
+          }
+          if (hls) {
+            try {
+              recoverLiveEdge(hls);
+              hls.startLoad();
+            } catch (e) {
+              scheduleFullReload('stall-hls');
+              return;
+            }
+            void tryPlay();
+            // If still stuck shortly after soft stall recovery, escalate.
+            session.stallTimer = setTimeout(function () {
+              session.stallTimer = null;
+              if (session.dead || session.userPaused || video.paused) return;
+              if (video.readyState < 3) scheduleFullReload('stall-persist');
+            }, STALL_MS);
+            return;
+          }
+          // Safari native HLS: hard reload of the same playlist.
+          scheduleFullReload('stall-native');
+        }
+
+        function armStallWatch() {
+          if (session.stallTimer) {
+            clearTimeout(session.stallTimer);
+            session.stallTimer = null;
+          }
+          if (session.dead || session.userPaused || video.paused) return;
+          session.stallTimer = setTimeout(function () {
+            session.stallTimer = null;
+            handleStall();
+          }, STALL_MS);
+        }
+
+        session._onWaiting = function () { armStallWatch(); };
+        session._onPlaying = function () {
+          session.userPaused = false;
+          session.softFatals = 0;
+          session.fullReloads = 0;
+          session.mediaRecovered = false;
+          session.seenProgress = true;
+          session.lastMediaTime = video.currentTime || 0;
+          fctvClearStallRetryTimers(session);
+          markFirstPlay();
+        };
+        session._onTimeUpdate = function () {
+          session.lastMediaTime = video.currentTime || 0;
+        };
+        session._onVideoError = function () {
+          if (session.dead || session.userPaused) return;
+          scheduleFullReload('video-error');
+        };
+        session._onEnded = function () {
+          // Live playlists sometimes end the media element when the window gaps.
+          if (session.dead || session.userPaused) return;
+          scheduleFullReload('ended');
+        };
+        session._onPause = function () {
+          // Distinguish intentional pause from stall-induced pause: if readyState is
+          // healthy and there is no pending error, treat as user pause.
+          if (session.dead) return;
+          if (video.readyState >= 3 && !video.error) {
+            session.userPaused = true;
+            fctvClearStallRetryTimers(session);
+          }
+        };
+        session._onPlay = function () {
+          session.userPaused = false;
+        };
+
+        function startProgressWatch() {
+          if (session.progressTimer) return;
+          session.progressTimer = setInterval(function () {
+            if (session.dead || session.userPaused || video.paused) return;
+            var t = video.currentTime || 0;
+            // Ignore cold start (clock still at 0) until we have seen real progress.
+            if (!session.seenProgress) {
+              if (t > 0.25) {
+                session.seenProgress = true;
+                session.lastMediaTime = t;
+              }
+              return;
+            }
+            // Frozen clock while supposedly playing → stall.
+            if (video.readyState < 2 || Math.abs(t - session.lastMediaTime) < 0.05) {
+              if (!session.stallTimer) armStallWatch();
+            } else {
+              session.lastMediaTime = t;
+              if (session.stallTimer) {
+                clearTimeout(session.stallTimer);
+                session.stallTimer = null;
+              }
+            }
+          }, 4000);
+        }
+
+        function bindVideoListeners() {
+          video.addEventListener('waiting', session._onWaiting);
+          video.addEventListener('stalled', session._onWaiting);
+          video.addEventListener('playing', session._onPlaying);
+          video.addEventListener('timeupdate', session._onTimeUpdate);
+          video.addEventListener('error', session._onVideoError);
+          video.addEventListener('ended', session._onEnded);
+          video.addEventListener('pause', session._onPause);
+          video.addEventListener('play', session._onPlay);
+          startProgressWatch();
+        }
+
+        function attachHlsJs(isInitial) {
+          destroyHlsInstance();
           var hls = new window.Hls({
             enableWorker: true,
             lowLatencyMode: false,
@@ -404,21 +655,80 @@
             backBufferLength: 30,
           });
           window._fctvHls = hls;
-          return new Promise(function (resolve) {
-            hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
-              resolve(tryPlay());
-            });
-            hls.on(window.Hls.Events.ERROR, function (_e, data) {
-              if (!data || !data.fatal) return;
-              if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
-              else if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
-            });
-            hls.loadSource(url);
-            hls.attachMedia(video);
+          hls.on(window.Hls.Events.MANIFEST_PARSED, function () {
+            markFirstPlay();
+            void tryPlay();
           });
+          hls.on(window.Hls.Events.ERROR, function (_e, data) {
+            if (session.dead || !data) return;
+            if (!data.fatal) {
+              // Non-fatal buffer stalls are handled by the waiting watchdog.
+              return;
+            }
+            session.softFatals += 1;
+            if (data.type === window.Hls.ErrorTypes.NETWORK_ERROR && session.softFatals <= SOFT_FATAL_MAX) {
+              try { hls.startLoad(); void tryPlay(); return; } catch (err) {}
+            }
+            if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR && session.softFatals <= SOFT_FATAL_MAX) {
+              try {
+                if (!session.mediaRecovered) {
+                  session.mediaRecovered = true;
+                  hls.recoverMediaError();
+                } else {
+                  hls.swapAudioCodec();
+                  hls.recoverMediaError();
+                }
+                void tryPlay();
+                return;
+              } catch (err) {}
+            }
+            scheduleFullReload('fatal-' + (data.type || 'unknown'));
+          });
+          hls.loadSource(url);
+          hls.attachMedia(video);
+          if (!isInitial) void tryPlay();
         }
-        video.src = url;
-        return tryPlay();
+
+        function attachNative(isInitial) {
+          destroyHlsInstance();
+          try { video.removeAttribute('src'); video.load(); } catch (e) {}
+          video.src = url;
+          if (isInitial || !session.userPaused) void tryPlay();
+          // Native path has no MANIFEST_PARSED — resolve on loadedmetadata / playing.
+          if (isInitial) {
+            var onMeta = function () {
+              video.removeEventListener('loadedmetadata', onMeta);
+              markFirstPlay();
+            };
+            video.addEventListener('loadedmetadata', onMeta);
+            if (video.readyState >= 1) onMeta();
+          }
+        }
+
+        function startSource(isInitial) {
+          if (session.dead) return;
+          if (video.canPlayType && video.canPlayType('application/vnd.apple.mpegurl')) {
+            attachNative(isInitial);
+            return;
+          }
+          if (window.Hls && window.Hls.isSupported()) {
+            attachHlsJs(isInitial);
+            return;
+          }
+          video.src = url;
+          void tryPlay();
+          if (isInitial) markFirstPlay();
+        }
+
+        bindVideoListeners();
+        return new Promise(function (resolve) {
+          session.firstPlayResolve = resolve;
+          startSource(true);
+          // Safety: don't hang the Dart await forever if manifest never arrives.
+          setTimeout(function () {
+            if (!session.firstPlayDone) markFirstPlay();
+          }, 12000);
+        });
       };
 
       /** Overlay controls inside the platform-view (keeps CanvasKit from blanking <video>). */

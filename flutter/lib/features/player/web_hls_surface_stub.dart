@@ -21,6 +21,8 @@ class WebHlsSurface extends StatelessWidget {
   Widget build(BuildContext context) => const ColoredBox(color: Colors.black);
 }
 
+void webBindStreamNeedsRefresh(VoidCallback? handler) {}
+
 Future<void> webHlsSetMuted(bool muted) async {}
 
 Future<void> webHlsTogglePlay() async {}

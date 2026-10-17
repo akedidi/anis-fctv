@@ -95,6 +95,9 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       setState(() => _query = _searchCtrl.text.trim().toLowerCase());
     });
     _searchPad.addListener(_onSearchPad);
+    if (kIsWeb) {
+      webBindStreamNeedsRefresh(() => unawaited(_refreshActivePlayback()));
+    }
     // First paint = shell + empty table skeleton; fetch only after that frame.
     SchedulerBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
@@ -201,6 +204,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    if (kIsWeb) webBindStreamNeedsRefresh(null);
     _listPollTimer?.cancel();
     _listPollTimer = null;
     _rootPopGuard?.cancel();
@@ -828,6 +832,49 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
         _loadToken = previousUrl != null ? previousToken + 1 : previousToken;
         _resolving = false;
       });
+    }
+  }
+
+  DateTime? _lastPlaybackRefreshAt;
+
+  /// Silent re-resolve when the web HLS watchdog exhausts local reloads (stale token).
+  Future<void> _refreshActivePlayback() async {
+    if (!kIsWeb) return;
+    final match = _selected;
+    final serverId = _activeServerId;
+    if (match == null || serverId == null || _resolving) return;
+    final now = DateTime.now();
+    final last = _lastPlaybackRefreshAt;
+    if (last != null && now.difference(last) < const Duration(seconds: 20)) return;
+    StreamServer? server;
+    for (final s in _servers) {
+      if (s.id == serverId) {
+        server = s;
+        break;
+      }
+    }
+    if (server == null) return;
+    _lastPlaybackRefreshAt = now;
+    final gen = ++_playGen;
+    final streamId = (server.streamId?.isNotEmpty == true) ? server.streamId : server.id;
+    try {
+      final url = await _api.resolvePlayback(
+        matchId: match.matchId,
+        sportType: match.sportType,
+        streamId: streamId,
+      );
+      if (!mounted || gen != _playGen) return;
+      if (url == _playableUrl) {
+        // Same proxy path — still bump token so the surface re-attaches HLS.
+        setState(() => _loadToken++);
+        return;
+      }
+      setState(() {
+        _playableUrl = url;
+        _loadToken++;
+      });
+    } catch (_) {
+      // Keep the current URL; JS watchdog continues soft/full reloads.
     }
   }
 
