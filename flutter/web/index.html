@@ -332,7 +332,6 @@
           session.video.removeEventListener('waiting', session._onWaiting);
           session.video.removeEventListener('stalled', session._onWaiting);
           session.video.removeEventListener('playing', session._onPlaying);
-          session.video.removeEventListener('timeupdate', session._onTimeUpdate);
           session.video.removeEventListener('error', session._onVideoError);
           session.video.removeEventListener('ended', session._onEnded);
           session.video.removeEventListener('pause', session._onPause);
@@ -447,6 +446,8 @@
           fullReloads: 0,
           mediaRecovered: false,
           seenProgress: false,
+          // Snapshot between progress polls. Updating it on every timeupdate
+          // would make each poll compare the clock with an almost identical value.
           lastMediaTime: 0,
           stallTimer: null,
           retryTimer: null,
@@ -540,6 +541,8 @@
           if (hls) {
             try {
               recoverLiveEdge(hls);
+              // Our own seek is not evidence that decoded playback resumed.
+              session.lastMediaTime = video.currentTime || 0;
               hls.startLoad();
             } catch (e) {
               scheduleFullReload('stall-hls');
@@ -547,10 +550,13 @@
             }
             void tryPlay();
             // If still stuck shortly after soft stall recovery, escalate.
+            var recoveryTime = video.currentTime || 0;
             session.stallTimer = setTimeout(function () {
               session.stallTimer = null;
               if (session.dead || session.userPaused || video.paused) return;
-              if (video.readyState < 3) scheduleFullReload('stall-persist');
+              if (video.readyState < 3 || Math.abs((video.currentTime || 0) - recoveryTime) < 0.05) {
+                scheduleFullReload('stall-persist');
+              }
             }, STALL_MS);
             return;
           }
@@ -559,13 +565,14 @@
         }
 
         function armStallWatch() {
-          if (session.stallTimer) {
-            clearTimeout(session.stallTimer);
-            session.stallTimer = null;
-          }
-          if (session.dead || session.userPaused || video.paused) return;
+          // Repeated waiting/stalled events must not push the deadline back.
+          if (session.dead || session.userPaused || video.paused || session.stallTimer || session.retryTimer) return;
+          var waitingTime = video.currentTime || 0;
           session.stallTimer = setTimeout(function () {
             session.stallTimer = null;
+            // Progress can resume without a playing event, or just before this
+            // timer runs. Never discard a healthy buffer in that case.
+            if (Math.abs((video.currentTime || 0) - waitingTime) >= 0.05) return;
             handleStall();
           }, STALL_MS);
         }
@@ -580,9 +587,6 @@
           session.lastMediaTime = video.currentTime || 0;
           fctvClearStallRetryTimers(session);
           markFirstPlay();
-        };
-        session._onTimeUpdate = function () {
-          session.lastMediaTime = video.currentTime || 0;
         };
         session._onVideoError = function () {
           if (session.dead || session.userPaused) return;
@@ -636,7 +640,6 @@
           video.addEventListener('waiting', session._onWaiting);
           video.addEventListener('stalled', session._onWaiting);
           video.addEventListener('playing', session._onPlaying);
-          video.addEventListener('timeupdate', session._onTimeUpdate);
           video.addEventListener('error', session._onVideoError);
           video.addEventListener('ended', session._onEnded);
           video.addEventListener('pause', session._onPause);
@@ -649,9 +652,10 @@
           var hls = new window.Hls({
             enableWorker: true,
             lowLatencyMode: false,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 10,
-            maxBufferLength: 30,
+            // More room for CDN jitter: 18s behind live on 3s playlists.
+            liveSyncDurationCount: 6,
+            liveMaxLatencyDurationCount: 15,
+            maxBufferLength: 45,
             backBufferLength: 30,
           });
           window._fctvHls = hls;
