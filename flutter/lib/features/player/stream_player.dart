@@ -49,6 +49,8 @@ class StreamPlayer extends StatefulWidget {
     this.onToggleFullscreen,
     this.onAirPlay,
     this.onMoveDownToServers,
+    /// Soft reconnects exhausted — parent should re-resolve a fresh playable URL.
+    this.onStreamNeedsRefresh,
   });
 
   final String? url;
@@ -63,6 +65,7 @@ class StreamPlayer extends StatefulWidget {
   final VoidCallback? onAirPlay;
   /// Down from the inline format / fullscreen buttons.
   final VoidCallback? onMoveDownToServers;
+  final VoidCallback? onStreamNeedsRefresh;
 
   @override
   State<StreamPlayer> createState() => StreamPlayerState();
@@ -86,13 +89,31 @@ class StreamPlayerState extends State<StreamPlayer> {
   VideoDisplayMode _displayMode = VideoDisplayMode.original;
   Timer? _hideTimer;
   Timer? _playbackWatchdog;
+  Timer? _stallTimer;
+  Timer? _reconnectTimer;
   final _playFocus = FocusNode(debugLabel: 'fs play');
   final _aspectFocus = FocusNode(debugLabel: 'fs aspect');
   final _exitFsFocus = FocusNode(debugLabel: 'fs exit');
   StreamSubscription<bool>? _playingSub;
   StreamSubscription<bool>? _bufferingSub;
+  StreamSubscription<String>? _errorSub;
+  /// Last value pushed to Android [setKeepScreenOn] (avoid redundant channel calls).
+  bool _keepScreenOnApplied = false;
   /// Emulator VO attempt index (cycles known-working SurfaceView paths).
   int _emulatorVoAttempt = 0;
+  /// True only after an explicit user pause — skips auto-reconnect.
+  bool _userPaused = false;
+  int _softReconnectCount = 0;
+  bool _reconnectInFlight = false;
+  Duration? _lastPosition;
+  DateTime? _lastProgressAt;
+  static const _maxSoftReconnects = 3;
+  static const _stallGrace = Duration(seconds: 10);
+  static const _reconnectDelays = <Duration>[
+    Duration(seconds: 1),
+    Duration(seconds: 2),
+    Duration(seconds: 4),
+  ];
 
   /// ExoPlayer path — required on Android TV emulator (media_kit EGL black frames).
   bool get _useExo =>
@@ -123,6 +144,7 @@ class StreamPlayerState extends State<StreamPlayer> {
     if (widget.url != null && widget.url!.isNotEmpty) {
       _awaitingPlayback = true;
     }
+    _startStallMonitor();
     _openIfNeeded(widget.url, token: widget.loadToken, force: true);
   }
 
@@ -143,8 +165,205 @@ class StreamPlayerState extends State<StreamPlayer> {
         debugPrint('FCTV exo error: ${v.errorDescription}');
       }
     });
+    _syncKeepScreenOn();
+    // Healthy decode cancels any pending retry — same guard as web HLS watchdog.
+    if (v.isPlaying && !v.hasError) {
+      _markHealthyPlayback(v.position);
+    } else if (v.hasError && !_userPaused) {
+      _scheduleReconnect('exo-error');
+    } else if (v.isCompleted && !v.isPlaying && !_userPaused && widget.url != null) {
+      // Live HLS "ended" only when playback actually stopped (not a mid-stream blip).
+      _scheduleReconnect('exo-completed');
+    }
     // Position ticks must not reset the idle timer — only arm it if it isn't running.
     if (v.isPlaying && _hideTimer == null) _bumpAutoHide();
+  }
+
+  /// Clock advanced / playing resumed → drop pending reconnects (web: playing event).
+  void _markHealthyPlayback(Duration position) {
+    final moved = _lastPosition == null || position != _lastPosition;
+    _lastPosition = position;
+    if (moved || _playing) {
+      _lastProgressAt = DateTime.now();
+    }
+    if (_softReconnectCount > 0) _softReconnectCount = 0;
+    _cancelReconnect();
+  }
+
+  void _startStallMonitor() {
+    _stallTimer?.cancel();
+    if (kIsWeb) return;
+    _stallTimer = Timer.periodic(const Duration(seconds: 4), (_) => _checkStall());
+  }
+
+  /// Still broken right now? Re-checked when a delayed retry fires.
+  bool _stillNeedsReconnect() {
+    if (!mounted || kIsWeb || _userPaused || _reconnectInFlight) return false;
+    if (_opening || widget.resolving || _awaitingPlayback) return false;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return false;
+
+    if (_useExo) {
+      final exo = _exo;
+      if (exo == null) return true;
+      final v = exo.value;
+      if (v.hasError) return true;
+      if (v.isCompleted && !v.isPlaying) return true;
+      // Playing with a moving/recent clock = healthy (do not tear down).
+      if (v.isPlaying) return false;
+      final last = _lastProgressAt;
+      return last != null && DateTime.now().difference(last) >= _stallGrace;
+    }
+
+    if (_playing) return false;
+    final last = _lastProgressAt;
+    return last != null && DateTime.now().difference(last) >= _stallGrace;
+  }
+
+  void _checkStall() {
+    if (!mounted || kIsWeb || _userPaused || _reconnectInFlight) return;
+    if (_opening || widget.resolving || _awaitingPlayback) return;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+
+    if (_useExo) {
+      final exo = _exo;
+      if (exo == null) {
+        _scheduleReconnect('exo-missing');
+        return;
+      }
+      final v = exo.value;
+      if (v.hasError) {
+        _scheduleReconnect('exo-error');
+        return;
+      }
+      if (v.isPlaying) {
+        final pos = v.position;
+        // Frozen clock while "playing" → arm reconnect only after grace (web stall watch).
+        if (_lastPosition != null &&
+            pos == _lastPosition &&
+            _lastProgressAt != null &&
+            DateTime.now().difference(_lastProgressAt!) >= _stallGrace) {
+          _scheduleReconnect('exo-frozen');
+          return;
+        }
+        if (_lastPosition == null || pos != _lastPosition) {
+          _markHealthyPlayback(pos);
+        }
+        return;
+      }
+      // Unexpected stop (not user pause): reopen after grace — never on a blip.
+      final last = _lastProgressAt;
+      if (last != null && DateTime.now().difference(last) >= _stallGrace) {
+        _scheduleReconnect(v.isBuffering ? 'exo-stall' : 'exo-stopped');
+      }
+      return;
+    }
+
+    final player = _player;
+    if (player == null) return;
+    if (_playing) {
+      final pos = player.state.position;
+      if (_lastPosition != null &&
+          pos == _lastPosition &&
+          _lastProgressAt != null &&
+          DateTime.now().difference(_lastProgressAt!) >= _stallGrace) {
+        _scheduleReconnect('mk-frozen');
+        return;
+      }
+      if (_lastPosition == null || pos != _lastPosition) {
+        _markHealthyPlayback(pos);
+      }
+      return;
+    }
+    final last = _lastProgressAt;
+    if (last != null && DateTime.now().difference(last) >= _stallGrace) {
+      _scheduleReconnect(_buffering ? 'mk-stall' : 'mk-stopped');
+    }
+  }
+
+  void _cancelReconnect() {
+    _reconnectTimer?.cancel();
+    _reconnectTimer = null;
+  }
+
+  void _scheduleReconnect(String reason) {
+    if (!mounted || kIsWeb || _userPaused || _reconnectInFlight) return;
+    if (_reconnectTimer != null) return;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    // Never queue a retry over healthy playback.
+    if (_useExo) {
+      final exo = _exo;
+      if (exo != null && exo.value.isPlaying && !exo.value.hasError) return;
+    } else if (_playing) {
+      return;
+    }
+
+    if (_softReconnectCount >= _maxSoftReconnects) {
+      debugPrint('FCTV reconnect: soft retries exhausted ($reason) — refresh URL');
+      _softReconnectCount = 0;
+      _lastProgressAt = DateTime.now(); // avoid immediate re-trigger
+      widget.onStreamNeedsRefresh?.call();
+      return;
+    }
+
+    final delay = _reconnectDelays[
+        _softReconnectCount.clamp(0, _reconnectDelays.length - 1)];
+    debugPrint(
+      'FCTV reconnect: $reason in ${delay.inSeconds}s '
+      '(attempt ${_softReconnectCount + 1}/$_maxSoftReconnects)',
+    );
+    _reconnectTimer = Timer(delay, () => unawaited(_doReconnect(reason)));
+  }
+
+  Future<void> _doReconnect(String reason) async {
+    _reconnectTimer = null;
+    if (!mounted || _userPaused || _reconnectInFlight) return;
+    final url = widget.url;
+    if (url == null || url.isEmpty) return;
+    // Playback may have recovered during the backoff — abort (web stall guard).
+    if (!_stillNeedsReconnect()) {
+      debugPrint('FCTV reconnect: aborted, playback healthy again ($reason)');
+      return;
+    }
+    if (_softReconnectCount >= _maxSoftReconnects) {
+      _scheduleReconnect(reason);
+      return;
+    }
+    _softReconnectCount++;
+    _reconnectInFlight = true;
+    _lastProgressAt = null;
+    _lastPosition = null;
+    debugPrint('FCTV reconnect: reopening ($reason) #$_softReconnectCount');
+    if (mounted) {
+      setState(() {
+        _opening = true;
+        _awaitingPlayback = true;
+        _showCenterChrome = isAndroidTv;
+      });
+      _syncKeepScreenOn();
+    }
+    try {
+      await _openIfNeeded(url, token: widget.loadToken, force: true);
+    } finally {
+      _reconnectInFlight = false;
+    }
+  }
+
+  /// Android TV treats remote inactivity as idle and starts the screensaver, which
+  /// pauses the activity and kills the stream. Hold the display awake while active.
+  void _syncKeepScreenOn() {
+    final want = !kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.android &&
+        (_playing ||
+            _buffering ||
+            _awaitingPlayback ||
+            _opening ||
+            widget.resolving);
+    if (want == _keepScreenOnApplied) return;
+    _keepScreenOnApplied = want;
+    unawaited(setKeepScreenOn(want));
   }
 
   Future<void> _disposeExo() async {
@@ -179,24 +398,28 @@ class StreamPlayerState extends State<StreamPlayer> {
       if (!mounted || gen != _openGen) return;
       _loadedUrl = url;
       _loadedToken = token;
+      _lastProgressAt = DateTime.now();
+      _lastPosition = controller.value.position;
       setState(() {
         _opening = false;
         _awaitingPlayback = !controller.value.isPlaying;
         _playing = controller.value.isPlaying;
         if (isAndroidTv) _showCenterChrome = true;
       });
+      _syncKeepScreenOn();
       debugPrint(
         'FCTV exo ready ${controller.value.size.width}x${controller.value.size.height} '
         'playing=${controller.value.isPlaying}',
       );
       _playbackWatchdog?.cancel();
       _playbackWatchdog = Timer(const Duration(seconds: 3), () {
-        if (!mounted || gen != _openGen) return;
+        if (!mounted || gen != _openGen || _userPaused) return;
         if (_playing) return;
         setState(() {
           _awaitingPlayback = false;
           _showCenterChrome = true;
         });
+        _scheduleReconnect('exo-no-autoplay');
       });
     } catch (e) {
       debugPrint('FCTV exo open failed: $e');
@@ -208,6 +431,7 @@ class StreamPlayerState extends State<StreamPlayer> {
         _awaitingPlayback = false;
         _showCenterChrome = true;
       });
+      if (!_userPaused) _scheduleReconnect('exo-open-failed');
     }
   }
 
@@ -216,6 +440,7 @@ class StreamPlayerState extends State<StreamPlayer> {
     if (player == null) return;
     _playingSub?.cancel();
     _bufferingSub?.cancel();
+    _errorSub?.cancel();
     _playingSub = player.stream.playing.listen((playing) {
       if (!mounted) return;
       setState(() {
@@ -225,11 +450,23 @@ class StreamPlayerState extends State<StreamPlayer> {
           _playbackWatchdog?.cancel();
         }
       });
-      if (playing) _bumpAutoHide();
+      _syncKeepScreenOn();
+      if (playing) {
+        // Brief pause/buffer blips must not leave a pending reconnect armed.
+        _markHealthyPlayback(player.state.position);
+        _bumpAutoHide();
+      }
+      // Unexpected stops are handled by the stall monitor after grace — not here.
     });
     _bufferingSub = player.stream.buffering.listen((buffering) {
       if (!mounted) return;
       setState(() => _buffering = buffering);
+      _syncKeepScreenOn();
+    });
+    _errorSub = player.stream.error.listen((err) {
+      if (!mounted || err.isEmpty || _userPaused) return;
+      debugPrint('FCTV media_kit error: $err');
+      _scheduleReconnect('mk-error');
     });
   }
 
@@ -277,8 +514,10 @@ class StreamPlayerState extends State<StreamPlayer> {
     _playbackWatchdog?.cancel();
     await _playingSub?.cancel();
     await _bufferingSub?.cancel();
+    await _errorSub?.cancel();
     _playingSub = null;
     _bufferingSub = null;
+    _errorSub = null;
     final old = _player;
     _player = Player();
     _controller = VideoController(_player!, configuration: _videoControllerConfiguration());
@@ -300,6 +539,11 @@ class StreamPlayerState extends State<StreamPlayer> {
     final urlChanged = oldWidget.url != widget.url;
     final tokenChanged = oldWidget.loadToken != widget.loadToken;
     if (urlChanged || tokenChanged) {
+      _userPaused = false;
+      _softReconnectCount = 0;
+      _cancelReconnect();
+      _lastProgressAt = null;
+      _lastPosition = null;
       _openIfNeeded(
         widget.url,
         token: widget.loadToken,
@@ -310,8 +554,10 @@ class StreamPlayerState extends State<StreamPlayer> {
         _awaitingPlayback = true;
         _showCenterChrome = false;
       });
+      _syncKeepScreenOn();
     } else if (oldWidget.resolving != widget.resolving) {
       setState(() {});
+      _syncKeepScreenOn();
     }
     if (!oldWidget.isFullscreen && widget.isFullscreen) {
       setState(() => _showCenterChrome = true);
@@ -467,9 +713,12 @@ class StreamPlayerState extends State<StreamPlayer> {
         setState(() {
           _opening = false;
           _awaitingPlayback = widget.resolving;
+          _playing = false;
+          _buffering = false;
           _loadedUrl = null;
           _loadedToken = -1;
         });
+        _syncKeepScreenOn();
       } else {
         _loadedUrl = null;
         _loadedToken = -1;
@@ -501,6 +750,7 @@ class StreamPlayerState extends State<StreamPlayer> {
         _showCenterChrome = false;
         _playing = false;
       });
+      _syncKeepScreenOn();
     }
     if (force || url != _loadedUrl) {
       _emulatorVoAttempt = 0;
@@ -552,10 +802,11 @@ class StreamPlayerState extends State<StreamPlayer> {
       if (!mounted || gen != _openGen) return;
       _loadedUrl = url;
       _loadedToken = token;
+      _lastProgressAt = DateTime.now();
       await _player!.play();
       _playbackWatchdog?.cancel();
       _playbackWatchdog = Timer(const Duration(seconds: 2), () {
-        if (!mounted || gen != _openGen) return;
+        if (!mounted || gen != _openGen || _userPaused) return;
         if (_playing) return;
         unawaited(_recoverNativeAutoplay(gen));
       });
@@ -574,9 +825,11 @@ class StreamPlayerState extends State<StreamPlayer> {
         _awaitingPlayback = false;
         _showCenterChrome = true;
       });
+      if (!_userPaused) _scheduleReconnect('mk-open-failed');
     } finally {
       if (gen == _openGen && mounted) {
         setState(() => _opening = false);
+        _syncKeepScreenOn();
       }
     }
   }
@@ -596,6 +849,7 @@ class StreamPlayerState extends State<StreamPlayer> {
         _showCenterChrome = true;
         _muted = true;
       });
+      if (!_userPaused) _scheduleReconnect('mk-no-autoplay');
     }
   }
 
@@ -691,8 +945,11 @@ class StreamPlayerState extends State<StreamPlayer> {
       final exo = _exo;
       if (exo == null) return;
       if (exo.value.isPlaying) {
+        _userPaused = true;
+        _cancelReconnect();
         await exo.pause();
       } else {
+        _userPaused = false;
         await exo.play();
       }
       if (!mounted) return;
@@ -701,12 +958,16 @@ class StreamPlayerState extends State<StreamPlayer> {
         _showCenterChrome = true;
         _playing = exo.value.isPlaying;
       });
+      _syncKeepScreenOn();
       _bumpAutoHide();
       return;
     }
     if (_playing) {
+      _userPaused = true;
+      _cancelReconnect();
       await _player?.pause();
     } else {
+      _userPaused = false;
       await _player?.play();
     }
     if (!mounted) return;
@@ -714,6 +975,7 @@ class StreamPlayerState extends State<StreamPlayer> {
       _awaitingPlayback = false;
       _showCenterChrome = true;
     });
+    _syncKeepScreenOn();
     _bumpAutoHide();
   }
 
@@ -748,12 +1010,19 @@ class StreamPlayerState extends State<StreamPlayer> {
   void dispose() {
     _hideTimer?.cancel();
     _playbackWatchdog?.cancel();
+    _stallTimer?.cancel();
+    _cancelReconnect();
     _playFocus.dispose();
     _aspectFocus.dispose();
     _exitFsFocus.dispose();
     _playingSub?.cancel();
     _bufferingSub?.cancel();
+    _errorSub?.cancel();
     _exo?.removeListener(_onExoUpdate);
+    if (_keepScreenOnApplied) {
+      _keepScreenOnApplied = false;
+      unawaited(setKeepScreenOn(false));
+    }
     unawaited(_disposeExo());
     _player?.dispose();
     super.dispose();

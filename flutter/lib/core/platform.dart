@@ -82,3 +82,11 @@ Future<bool> enterAndroidPictureInPicture() async {
     return false;
   }
 }
+
+/// Keep the display awake (blocks Android TV screensaver during playback).
+Future<void> setKeepScreenOn(bool enabled) async {
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.android) return;
+  try {
+    await platformChannel.invokeMethod<void>('setKeepScreenOn', {'enabled': enabled});
+  } catch (_) {}
+}

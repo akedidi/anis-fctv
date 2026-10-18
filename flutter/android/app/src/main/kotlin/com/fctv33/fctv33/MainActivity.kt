@@ -32,6 +32,11 @@ class MainActivity : FlutterActivity() {
                     "isAndroidTv" -> result.success(isAndroidTv())
                     "isAndroidEmulator" -> result.success(isAndroidEmulator())
                     "enterPictureInPicture" -> result.success(enterPip())
+                    "setKeepScreenOn" -> {
+                        val enabled = call.argument<Boolean>("enabled") == true
+                        setKeepScreenOn(enabled)
+                        result.success(null)
+                    }
                     "getAppVersion" -> {
                         try {
                             val pInfo = if (Build.VERSION.SDK_INT >= 33) {
@@ -218,6 +223,21 @@ class MainActivity : FlutterActivity() {
             hardware.contains("goldfish") ||
             hardware.contains("ranchu") ||
             manufacturer.contains("genymotion")
+    }
+
+    /**
+     * Prevent Android TV screensaver / display sleep while a stream is active.
+     * Without this, idle timeout blanks the TV even though video is playing
+     * (remote inactivity is treated as user idle).
+     */
+    private fun setKeepScreenOn(enabled: Boolean) {
+        runOnUiThread {
+            if (enabled) {
+                window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            } else {
+                window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
     }
 
     /** System PiP for phones only — not offered on Android TV. */

@@ -837,9 +837,8 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
 
   DateTime? _lastPlaybackRefreshAt;
 
-  /// Silent re-resolve when the web HLS watchdog exhausts local reloads (stale token).
+  /// Silent re-resolve when the player exhausts soft reconnects (stale token / dead HLS).
   Future<void> _refreshActivePlayback() async {
-    if (!kIsWeb) return;
     final match = _selected;
     final serverId = _activeServerId;
     if (match == null || serverId == null || _resolving) return;
@@ -923,6 +922,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
           url: _playableUrl,
           loadToken: _loadToken,
           resolving: _resolving,
+          onStreamNeedsRefresh: () => unawaited(_refreshActivePlayback()),
           onExit: _exitFullscreen,
         ),
       ),
@@ -1038,6 +1038,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
             onTab: _onDetailTab,
             onToggleMini: supportsMiniPlayer ? () => setState(() => _mini = !_mini) : null,
             onFullscreen: _enterFullscreen,
+            onStreamNeedsRefresh: () => unawaited(_refreshActivePlayback()),
             onClose: phone ? _closeDetail : null,
           );
 
@@ -1092,6 +1093,7 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
                         title: _selected!.name,
                         expanded: false,
                         resolving: _resolving,
+                        onStreamNeedsRefresh: () => unawaited(_refreshActivePlayback()),
                       ),
                     ),
                     title: Text(_selected!.name, maxLines: 1, overflow: TextOverflow.ellipsis),
@@ -1772,6 +1774,7 @@ class _DetailPane extends StatelessWidget {
     required this.onTab,
     this.onToggleMini,
     required this.onFullscreen,
+    this.onStreamNeedsRefresh,
     this.onClose,
   });
 
@@ -1797,6 +1800,7 @@ class _DetailPane extends StatelessWidget {
   final ValueChanged<int> onTab;
   final VoidCallback? onToggleMini;
   final VoidCallback onFullscreen;
+  final VoidCallback? onStreamNeedsRefresh;
   final VoidCallback? onClose;
 
   @override
@@ -1906,6 +1910,7 @@ class _DetailPane extends StatelessWidget {
       isFullscreen: fullscreen,
       onTogglePiP: onToggleMini,
       onToggleFullscreen: onFullscreen,
+      onStreamNeedsRefresh: onStreamNeedsRefresh,
       onMoveDownToServers: () {
         if (firstServerFocus.context == null) return;
         firstServerFocus.requestFocus();
@@ -2791,6 +2796,7 @@ class _FullscreenRoute extends StatelessWidget {
     required this.url,
     required this.loadToken,
     required this.resolving,
+    this.onStreamNeedsRefresh,
     required this.onExit,
   });
   final GlobalKey<StreamPlayerState> playerKey;
@@ -2798,6 +2804,7 @@ class _FullscreenRoute extends StatelessWidget {
   final String? url;
   final int loadToken;
   final bool resolving;
+  final VoidCallback? onStreamNeedsRefresh;
   final void Function(BuildContext context) onExit;
 
   bool _isBackKey(LogicalKeyboardKey key) =>
@@ -2844,6 +2851,7 @@ class _FullscreenRoute extends StatelessWidget {
               isFullscreen: true,
               onToggleFullscreen: () => onExit(context),
               onTogglePiP: supportsMiniPlayer ? () => Navigator.of(context).pop(true) : null,
+              onStreamNeedsRefresh: onStreamNeedsRefresh,
             ),
           ),
         ),
