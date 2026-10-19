@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 7,
-  "versionName": "1.0.6",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.6/fctv-tv-1.0.6.apk",
-  "changelog": "TV update dialog focus, clear selection on sport switch, keep-screen-on + auto-reconnect. Same 1.0.6 / versionCode 7 rebuild.",
+  "versionCode": 8,
+  "versionName": "1.0.7",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.7/fctv-tv-1.0.7.apk",
+  "changelog": "TV update dialog focus, clear selection on sport switch, keep-screen-on + auto-reconnect.",
   "publishedAt": "2026-10-19"
 }
