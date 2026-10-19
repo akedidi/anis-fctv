@@ -404,8 +404,12 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       });
     }
     final out = list.toList();
+    // Keep the open match visible when Live/Finished/search would hide it — but only if it
+    // still belongs to the loaded sport list. Never re-inject after a sport-tab switch.
     final sel = _selected;
-    if (sel != null && !out.any((m) => m.matchId == sel.matchId)) {
+    if (sel != null &&
+        !out.any((m) => m.matchId == sel.matchId) &&
+        _matches.any((m) => m.matchId == sel.matchId)) {
       out.insert(0, sel);
     }
     return out;
@@ -968,9 +972,24 @@ class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
       _load();
       return;
     }
+    _detailRefreshGen++;
+    _playGen++;
     setState(() {
       _sportType = type;
       _error = null;
+      // Drop the previous sport's selection so it cannot stay pinned in the new list.
+      _selected = null;
+      _mini = false;
+      _playableUrl = null;
+      _activeServerId = null;
+      _servers = [];
+      _events = [];
+      _homeLineup = [];
+      _awayLineup = [];
+      _stats = [];
+      _h2h = const H2HSummary();
+      _detailLoading = false;
+      _resolving = false;
     });
     _load();
   }

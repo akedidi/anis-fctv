@@ -3,6 +3,6 @@
   "versionCode": 7,
   "versionName": "1.0.6",
   "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.6/fctv-tv-1.0.6.apk",
-  "changelog": "Keep screen on during playback; auto-reconnect on stall/error without interrupting healthy streams. Same 1.0.6 / versionCode 7 rebuild.",
-  "publishedAt": "2026-10-18"
+  "changelog": "TV update dialog focus, clear selection on sport switch, keep-screen-on + auto-reconnect. Same 1.0.6 / versionCode 7 rebuild.",
+  "publishedAt": "2026-10-19"
 }

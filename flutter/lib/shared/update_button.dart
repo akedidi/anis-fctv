@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../core/app_update.dart';
 import '../core/platform.dart';
@@ -78,43 +79,45 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
             ],
           );
         }
-        // TV: Material dialog actions are not D-pad friendly — use TvFocusable.
+        // TV: both actions share the same idle look; only the focused one fills accent
+        // (a permanent accent "Update" chip made left/right feel broken).
         return FocusScope(
           autofocus: true,
           child: AlertDialog(
             backgroundColor: FctvColors.surfaceElevated,
             title: Text('Update to ${info.versionName}'),
-            content: body,
-            actionsAlignment: MainAxisAlignment.end,
-            actions: [
-              TvFocusable(
-                onActivate: () => Navigator.pop(ctx, false),
-                borderRadius: 10,
-                scale: 1.08,
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Text('Later', style: TextStyle(fontWeight: FontWeight.w700)),
-                ),
-              ),
-              const SizedBox(width: 8),
-              TvFocusable(
-                autofocus: true,
-                onActivate: () => Navigator.pop(ctx, true),
-                borderRadius: 10,
-                scale: 1.08,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: FctvColors.accent,
-                    borderRadius: BorderRadius.circular(10),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                body,
+                const SizedBox(height: 22),
+                FocusTraversalGroup(
+                  policy: OrderedTraversalPolicy(),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      FocusTraversalOrder(
+                        order: const NumericFocusOrder(1),
+                        child: _TvUpdateDialogAction(
+                          label: 'Later',
+                          onActivate: () => Navigator.pop(ctx, false),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FocusTraversalOrder(
+                        order: const NumericFocusOrder(2),
+                        child: _TvUpdateDialogAction(
+                          label: 'Update',
+                          autofocus: true,
+                          onActivate: () => Navigator.pop(ctx, true),
+                        ),
+                      ),
+                    ],
                   ),
-                  child: const Text(
-                    'Update',
-                    style: TextStyle(fontWeight: FontWeight.w800, color: Colors.black),
-                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         );
       },
@@ -207,6 +210,82 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
           onTap: _busy ? null : _onPressed,
           borderRadius: BorderRadius.circular(10),
           child: content,
+        ),
+      ),
+    );
+  }
+}
+
+/// Dialog action for Android TV — idle = muted chip, focused = accent fill + ring.
+class _TvUpdateDialogAction extends StatefulWidget {
+  const _TvUpdateDialogAction({
+    required this.label,
+    required this.onActivate,
+    this.autofocus = false,
+  });
+
+  final String label;
+  final VoidCallback onActivate;
+  final bool autofocus;
+
+  @override
+  State<_TvUpdateDialogAction> createState() => _TvUpdateDialogActionState();
+}
+
+class _TvUpdateDialogActionState extends State<_TvUpdateDialogAction> {
+  bool _focused = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final fg = _focused ? Colors.black : Colors.white;
+    return Focus(
+      autofocus: widget.autofocus,
+      onFocusChange: (v) => setState(() => _focused = v),
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey == LogicalKeyboardKey.select ||
+            event.logicalKey == LogicalKeyboardKey.enter ||
+            event.logicalKey == LogicalKeyboardKey.space ||
+            event.logicalKey == LogicalKeyboardKey.gameButtonA) {
+          widget.onActivate();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: GestureDetector(
+        onTap: widget.onActivate,
+        child: AnimatedScale(
+          scale: _focused ? 1.1 : 1,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            decoration: BoxDecoration(
+              color: _focused ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: _focused ? FctvColors.accent : Colors.white24,
+                width: _focused ? 3 : 1.5,
+              ),
+              boxShadow: _focused
+                  ? [
+                      BoxShadow(
+                        color: FctvColors.accent.withValues(alpha: 0.55),
+                        blurRadius: 16,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: fg,
+              ),
+            ),
+          ),
         ),
       ),
     );
