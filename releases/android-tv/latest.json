@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 8,
-  "versionName": "1.0.7",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.7/fctv-tv-1.0.7.apk",
-  "changelog": "TV update dialog focus, clear selection on sport switch, keep-screen-on + auto-reconnect.",
-  "publishedAt": "2026-10-19"
+  "versionCode": 9,
+  "versionName": "1.0.8",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.8/fctv-tv-1.0.8.apk",
+  "changelog": "Fix Fire OS green screen: no ClipRRect/FittedBox on Exo PlatformView, stronger Fire TV detection.",
+  "publishedAt": "2026-10-21"
 }

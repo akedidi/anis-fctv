@@ -2045,10 +2045,9 @@ class _DetailPane extends StatelessWidget {
         onServer: onServer,
         firstServerFocus: firstServerFocus,
         tabBody: tvTabBody,
-        player: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: playerWidget,
-        ),
+        // Never ClipRRect PlatformView (Exo on Fire OS) — clip leaves a green
+        // surface. Corners stay square on TV; phone/web still clip below.
+        player: playerWidget,
       );
     }
 

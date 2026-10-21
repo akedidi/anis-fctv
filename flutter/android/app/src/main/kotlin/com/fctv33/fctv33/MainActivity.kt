@@ -203,7 +203,14 @@ class MainActivity : FlutterActivity() {
     private fun isAndroidTv(): Boolean {
         val uiMode = getSystemService(UI_MODE_SERVICE) as? UiModeManager
         if (uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
-        return packageManager.hasSystemFeature("android.software.leanback")
+        // Fire TV Stick / Cube (Amazon Fire OS) — leanback is not always reported.
+        if (packageManager.hasSystemFeature("amazon.hardware.fire_tv")) return true
+        if (packageManager.hasSystemFeature("android.software.leanback")) return true
+        val manufacturer = Build.MANUFACTURER.lowercase()
+        val model = Build.MODEL.lowercase()
+        // Fire TV devices use AFT* model codes (AFTSS, AFTMMM, …).
+        if (manufacturer.contains("amazon") && model.startsWith("aft")) return true
+        return false
     }
 
     private fun isAndroidEmulator(): Boolean {

@@ -1064,14 +1064,27 @@ class StreamPlayerState extends State<StreamPlayer> {
     if (_useExo) {
       final exo = _exo;
       if (exo == null || !exo.value.isInitialized) {
-        return const SizedBox.expand();
+        return const ColoredBox(color: Colors.black);
       }
-      final child = SizedBox(
-        width: exo.value.size.width.clamp(1, 4096),
-        height: exo.value.size.height.clamp(1, 4096),
-        child: VideoPlayer(exo),
+      // PlatformView ignores FittedBox/Clip transforms on Fire OS → green
+      // letterbox. Size the SurfaceView to the target frame; Exo scales into it.
+      final videoAr = exo.value.aspectRatio > 0 ? exo.value.aspectRatio : 16 / 9;
+      final player = VideoPlayer(exo);
+      return ColoredBox(
+        color: Colors.black,
+        child: switch (_displayMode) {
+          VideoDisplayMode.stretch => SizedBox.expand(child: player),
+          VideoDisplayMode.original => Center(
+              child: AspectRatio(aspectRatio: videoAr, child: player),
+            ),
+          VideoDisplayMode.ratio16x9 => Center(
+              child: AspectRatio(aspectRatio: 16 / 9, child: player),
+            ),
+          VideoDisplayMode.ratio4x3 => Center(
+              child: AspectRatio(aspectRatio: 4 / 3, child: player),
+            ),
+        },
       );
-      return _DisplayModeBox(mode: _displayMode, child: child);
     }
     final fit = switch (_displayMode) {
       VideoDisplayMode.original => BoxFit.contain,
@@ -1492,53 +1505,6 @@ class _PlayerActionBar extends StatelessWidget {
                 : Colors.white,
       ),
     );
-  }
-}
-
-class _DisplayModeBox extends StatelessWidget {
-  const _DisplayModeBox({required this.mode, required this.child});
-
-  final VideoDisplayMode mode;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    switch (mode) {
-      case VideoDisplayMode.original:
-        return FittedBox(
-          fit: BoxFit.contain,
-          clipBehavior: Clip.hardEdge,
-          child: child,
-        );
-      case VideoDisplayMode.stretch:
-        return FittedBox(
-          fit: BoxFit.fill,
-          clipBehavior: Clip.hardEdge,
-          child: child,
-        );
-      case VideoDisplayMode.ratio16x9:
-        return Center(
-          child: AspectRatio(
-            aspectRatio: 16 / 9,
-            child: FittedBox(
-              fit: BoxFit.cover,
-              clipBehavior: Clip.hardEdge,
-              child: child,
-            ),
-          ),
-        );
-      case VideoDisplayMode.ratio4x3:
-        return Center(
-          child: AspectRatio(
-            aspectRatio: 4 / 3,
-            child: FittedBox(
-              fit: BoxFit.cover,
-              clipBehavior: Clip.hardEdge,
-              child: child,
-            ),
-          ),
-        );
-    }
   }
 }
 
