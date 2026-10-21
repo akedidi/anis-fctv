@@ -1,8 +1,8 @@
 {
   "channel": "android-tv",
-  "versionCode": 9,
-  "versionName": "1.0.8",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.8/fctv-tv-1.0.8.apk",
-  "changelog": "Fix Fire OS green screen: no ClipRRect/FittedBox on Exo PlatformView, stronger Fire TV detection.",
+  "versionCode": 10,
+  "versionName": "1.0.9",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.9/fctv-tv-1.0.9.apk",
+  "changelog": "In-app update like AnisFlix: async download, system installer, delete APK from cache after install.",
   "publishedAt": "2026-10-21"
 }

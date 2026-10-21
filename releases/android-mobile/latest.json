@@ -1,8 +1,8 @@
 {
   "channel": "android-mobile",
-  "versionCode": 7,
-  "versionName": "1.0.6",
-  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.6/fctv-mobile-1.0.6.apk",
-  "changelog": "Same updater as TV: Update button from latest.json, hide when current, clear APK cache after upgrade. New app icon and brand mark.",
-  "publishedAt": "2026-10-16"
+  "versionCode": 10,
+  "versionName": "1.0.9",
+  "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.9/fctv-mobile-1.0.9.apk",
+  "changelog": "In-app update like AnisFlix: async download, system installer, delete APK from cache after install.",
+  "publishedAt": "2026-10-21"
 }

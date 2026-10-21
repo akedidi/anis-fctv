@@ -9,6 +9,7 @@ import '../core/theme.dart';
 import 'tv_focus.dart';
 
 /// Top-right update control — visible only when a newer APK is on the git channel.
+/// Flow matches AnisFlix Android TV: poll → tap → native download → system installer.
 class AppUpdateButton extends StatefulWidget {
   const AppUpdateButton({super.key});
 
@@ -28,7 +29,8 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     super.initState();
     if (_service.isSupported) {
       unawaited(_refresh());
-      _poll = Timer.periodic(const Duration(minutes: 1), (_) => unawaited(_refresh()));
+      // Same cadence as AnisFlix TV update checks.
+      _poll = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_refresh()));
     }
   }
 
@@ -39,6 +41,7 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
   }
 
   Future<void> _refresh() async {
+    if (_busy) return;
     final info = await _service.checkForUpdate();
     if (!mounted) return;
     setState(() {
@@ -128,25 +131,31 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
       _busy = true;
       _status = 'Downloading…';
     });
-    final err = await _service.installUpdate(info);
+    final result = await _service.installUpdate(info);
     if (!mounted) return;
-    if (err == null) {
-      // Installer opened — hide until a newer build appears after relaunch.
-      setState(() {
-        _busy = false;
-        _status = null;
-        _update = null;
-      });
-      return;
-    }
+
+    // Native returns immediately with "started" while download continues —
+    // unlock the UI like AnisFlix so menus stay usable.
     setState(() {
       _busy = false;
-      _status = err;
+      _status = null;
     });
-    if (context.mounted) {
+
+    final message = switch (result) {
+      'started' => 'Download started. The installer will open automatically.',
+      'settings' => 'Allow FCTV33 to install apps, then tap Update again.',
+      'invalid_url' => 'Invalid update URL.',
+      'ignored' => null,
+      _ => 'Unable to start the update.',
+    };
+    if (message != null && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(err), behavior: SnackBarBehavior.floating),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
+    }
+    if (result == 'started') {
+      // Hide until a newer build appears after relaunch.
+      setState(() => _update = null);
     }
   }
 

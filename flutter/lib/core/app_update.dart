@@ -22,6 +22,7 @@ class AppUpdateInfo {
     required this.versionName,
     required this.apkUrl,
     this.changelog = '',
+    this.sha256 = '',
   });
 
   final String channel;
@@ -29,14 +30,22 @@ class AppUpdateInfo {
   final String versionName;
   final String apkUrl;
   final String changelog;
+  final String sha256;
 
   factory AppUpdateInfo.fromJson(Map<String, dynamic> json) {
     return AppUpdateInfo(
       channel: (json['channel'] as String?) ?? '',
-      versionCode: _readVersionCode(json['versionCode']),
-      versionName: (json['versionName'] as String?) ?? '',
-      apkUrl: (json['apkUrl'] as String?) ?? '',
-      changelog: (json['changelog'] as String?) ?? '',
+      versionCode: _readVersionCode(json['versionCode'] ?? json['buildNumber']),
+      versionName: (json['versionName'] as String?) ??
+          (json['version'] as String?) ??
+          '',
+      apkUrl: (json['apkUrl'] as String?) ??
+          (json['downloadUrl'] as String?) ??
+          '',
+      changelog: (json['changelog'] as String?) ??
+          (json['releaseNotes'] as String?) ??
+          '',
+      sha256: (json['sha256'] as String?) ?? '',
     );
   }
 }
@@ -54,7 +63,9 @@ class AppVersion {
   final String versionName;
 }
 
-/// Checks git `releases/<channel>/latest.json` and installs APKs on Android.
+/// Checks git `releases/<channel>/latest.json` and installs APKs on Android
+/// (same internal flow as AnisFlix TV: native download → system installer →
+/// delete cached APK after replace).
 class AppUpdateService {
   AppUpdateService({this.manifestBase = kDefaultUpdateManifestBase});
 
@@ -98,6 +109,7 @@ class AppUpdateService {
           .get(
             uri,
             headers: const {
+              'Accept': 'application/vnd.github.raw+json',
               'Cache-Control': 'no-cache',
               'Pragma': 'no-cache',
             },
@@ -107,7 +119,7 @@ class AppUpdateService {
       final map = jsonDecode(res.body);
       if (map is! Map<String, dynamic>) return null;
       final info = AppUpdateInfo.fromJson(map);
-      if (info.versionCode <= 0 || info.apkUrl.isEmpty) return null;
+      if (info.versionCode <= 0 || !info.apkUrl.startsWith('https://')) return null;
       return info;
     } catch (_) {
       return null;
@@ -124,23 +136,25 @@ class AppUpdateService {
     return latest;
   }
 
-  /// Downloads the APK and opens the system installer.
-  /// Returns `null` on success, or an error message.
-  Future<String?> installUpdate(AppUpdateInfo info) async {
-    if (!isSupported || info.apkUrl.isEmpty) return 'Update not supported';
+  /// Starts the native async download + system installer.
+  ///
+  /// Returns: `started` | `settings` | `invalid_url` | `failed` | `ignored`
+  Future<String> installUpdate(AppUpdateInfo info) async {
+    if (!isSupported || info.apkUrl.isEmpty) return 'ignored';
     try {
-      await platformChannel.invokeMethod<void>(
-        'installApkFromUrl',
+      final result = await platformChannel.invokeMethod<String>(
+        'installUpdate',
         <String, Object?>{
           'url': info.apkUrl,
-          'fileName': 'fctv33-$channel-update.apk',
+          'sha256': info.sha256,
         },
       );
-      return null;
+      return result ?? 'failed';
     } on PlatformException catch (e) {
-      return e.message ?? e.code;
-    } catch (e) {
-      return e.toString();
+      if (e.code == 'permission') return 'settings';
+      return 'failed';
+    } catch (_) {
+      return 'failed';
     }
   }
 }

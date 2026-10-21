@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<paths>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updates" path="updates/" />
+    <!-- Legacy flat cache paths from older updater builds. -->
     <cache-path name="apk_cache" path="." />
     <external-cache-path name="apk_ext_cache" path="." />
 </paths>
