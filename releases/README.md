@@ -27,8 +27,18 @@ Each device channel has its own folder and `latest.json` so TV and mobile can sh
 
 1. Bump `flutter/pubspec.yaml` (`version: x.y.z+N`).
 2. Build the APK (`flutter build apk --release …`).
-3. Create a GitHub Release tag, e.g. `android-tv-1.0.1` / `android-mobile-1.0.1`, and attach the APK.
-4. Update the matching `latest.json` (`versionCode`, `versionName`, `apkUrl`, `changelog`).
-5. Commit & push this repo so clients can read:
+3. **Android TV (Downloader `5471757`)** — always **overwrite** the stable asset (do not change the URL):
+
+   ```bash
+   cp app-release.apk /tmp/fctv-tv-1.0.3.apk
+   gh release upload android-tv-1.0.3 /tmp/fctv-tv-1.0.3.apk --clobber
+   ```
+
+   Stable URL (in-app update + Downloader code):
+   `https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk`
+
+4. Mobile: create/overwrite a GitHub Release and set `apkUrl` in `android-mobile/latest.json`.
+5. Update the matching `latest.json` (`versionCode`, `versionName`, `apkUrl`, `changelog`, optional `sha256`).
+6. Commit & push this repo so clients can read:
 
 `https://raw.githubusercontent.com/akedidi/anis-fctv/main/releases/<channel>/latest.json`
