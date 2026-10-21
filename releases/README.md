@@ -37,7 +37,16 @@ Each device channel has its own folder and `latest.json` so TV and mobile can sh
    Stable URL (in-app update + Downloader code):
    `https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk`
 
-4. Mobile: create/overwrite a GitHub Release and set `apkUrl` in `android-mobile/latest.json`.
+4. **Android mobile (Downloader `2306515`)** — always **overwrite** the stable asset:
+
+   ```bash
+   cp app-release.apk /tmp/fctv-mobile-1.0.6.apk
+   gh release upload android-mobile-1.0.6 /tmp/fctv-mobile-1.0.6.apk --clobber
+   ```
+
+   Stable URL:
+   `https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.6/fctv-mobile-1.0.6.apk`
+
 5. Update the matching `latest.json` (`versionCode`, `versionName`, `apkUrl`, `changelog`, optional `sha256`).
 6. Commit & push this repo so clients can read:
 
