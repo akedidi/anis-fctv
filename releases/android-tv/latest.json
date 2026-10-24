@@ -1,9 +1,9 @@
 {
   "channel": "android-tv",
-  "versionCode": 12,
-  "versionName": "1.0.11",
+  "versionCode": 13,
+  "versionName": "1.0.12",
   "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk",
-  "changelog": "Build 1.0.11 (12) — nouveau système AnisFlix build 45 : installateur Android complet avec Ouvrir / Terminé, progression et reprises conservées, sans réouverture automatique ni permission de superposition. Code Downloader 5471757 inchangé.",
+  "changelog": "Build 1.0.12 (13) — le focus initial Android TV se place sur le bouton All en haut à gauche, sans interrompre la navigation lors des actualisations. Code Downloader 5471757 inchangé.",
   "publishedAt": "2026-10-24",
-  "sha256": "64c0e4b205162fb070f74b0ee6c3017a4d6a2b324cfbef010e178ccfd516bf61"
+  "sha256": "0aba449caec0e51dbf9d6da4453024afe3ee06104c615337df798c50c368d97a"
 }

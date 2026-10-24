@@ -1339,6 +1339,7 @@ class _LeftPane extends StatelessWidget {
                     icon: s.icon,
                     label: s.label,
                     active: sportType == s.type,
+                    autofocus: isAndroidTv && s.type == 0,
                     badge: badgeForSport(s.type),
                     compact: isAndroidTv,
                     onTap: () => onSport(s.type),
@@ -1457,6 +1458,7 @@ class _SportTabButton extends StatelessWidget {
     required this.label,
     required this.active,
     required this.onTap,
+    this.autofocus = false,
     this.badge,
     this.compact = false,
   });
@@ -1465,6 +1467,7 @@ class _SportTabButton extends StatelessWidget {
   final String label;
   final bool active;
   final VoidCallback onTap;
+  final bool autofocus;
   final String? badge;
   final bool compact;
 
@@ -1531,6 +1534,7 @@ class _SportTabButton extends StatelessWidget {
     if (isAndroidTv || compact) {
       return TvFocusable(
         onActivate: onTap,
+        autofocus: autofocus,
         borderRadius: 16,
         scale: 1.1,
         child: content,
