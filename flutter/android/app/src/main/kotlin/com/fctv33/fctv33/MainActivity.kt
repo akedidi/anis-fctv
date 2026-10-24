@@ -1,8 +1,5 @@
 package com.fctv33.fctv33
 
-import android.app.AlertDialog
-import android.app.PendingIntent
-import android.content.pm.PackageInstaller
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
@@ -12,6 +9,7 @@ import java.util.concurrent.atomic.AtomicReference
 import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.content.Intent
+import android.content.ClipData
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.net.Uri
@@ -33,40 +31,11 @@ import java.net.URL
 import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
-    companion object {
-        @Volatile
-        private var progressBridge: MethodChannel? = null
-
-        fun emitUpdateProgressFromOutside(
-            phase: String,
-            received: Long = 0L,
-            total: Long = 0L,
-            attempt: Int = 1,
-            maxAttempts: Int = 3,
-            error: String? = null,
-        ) {
-            val channel = progressBridge ?: return
-            val payload = HashMap<String, Any?>().apply {
-                put("phase", phase)
-                put("received", received)
-                put("total", total)
-                put("attempt", attempt)
-                put("maxAttempts", maxAttempts)
-                if (error != null) put("error", error)
-            }
-            // Receiver may run off the main thread.
-            android.os.Handler(android.os.Looper.getMainLooper()).post {
-                channel.invokeMethod("updateInstallProgress", payload)
-            }
-        }
-    }
-
     private var platformBridge: MethodChannel? = null
     @Volatile private var updateInFlight = false
     @Volatile private var lastProgressEmitMs = 0L
     private var pendingUpdateUrl: String? = null
     private var pendingUpdateSha256: String? = null
-    private var updateReturnDialogShowing = false
 
     private val channelName = "com.fctv33.fctv33/platform"
 
@@ -88,7 +57,6 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
-        if (progressBridge === platformBridge) progressBridge = null
         platformBridge = null
         super.onDestroy()
     }
@@ -96,7 +64,6 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         platformBridge = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
-        progressBridge = platformBridge
         platformBridge!!.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isAndroidTv" -> result.success(isAndroidTv())
@@ -188,53 +155,6 @@ class MainActivity : FlutterActivity() {
             return "settings"
         }
 
-        val updatePrefs = getSharedPreferences("fctv_updates", MODE_PRIVATE)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
-            !Settings.canDrawOverlays(this) &&
-            !updatePrefs.getBoolean("auto_return_permission_declined", false)
-        ) {
-            pendingUpdateUrl = url
-            pendingUpdateSha256 = expectedSha256
-            if (!updateReturnDialogShowing) {
-                updateReturnDialogShowing = true
-                AlertDialog.Builder(this)
-                    .setTitle("Retour automatique après mise à jour")
-                    .setMessage(
-                        "Android ferme FCTV33 pendant l’installation. Pour rouvrir " +
-                            "l’app automatiquement, autorisez « Afficher par-dessus les autres " +
-                            "applications » dans l’écran suivant. Cette autorisation est " +
-                            "facultative : sans elle, vous devrez rouvrir l’app manuellement.",
-                    )
-                    .setPositiveButton("Autoriser") { _, _ ->
-                        // Opening Android settings is not a permission grant.
-                        // On return, recheck the permission before proceeding.
-                        updateReturnDialogShowing = false
-                        try {
-                            updatePrefs.edit().putBoolean("auto_return_permission_declined", true).apply()
-                            startActivity(Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:$packageName"),
-                            ))
-                        } catch (_: Exception) {
-                            resumePendingUpdateIfReady()
-                        }
-                    }
-                    .setNegativeButton("Continuer sans") { _, _ ->
-                        updatePrefs.edit().putBoolean("auto_return_permission_declined", true).apply()
-                        updateReturnDialogShowing = false
-                        resumePendingUpdateIfReady()
-                    }
-                    .setOnCancelListener {
-                        updateReturnDialogShowing = false
-                        pendingUpdateUrl = null
-                        pendingUpdateSha256 = null
-                        emitUpdateProgress(phase = "failed", error = "Installation annulée")
-                    }
-                    .show()
-            }
-            return "settings"
-        }
-
         pendingUpdateUrl = null
         pendingUpdateSha256 = null
         beginUpdateDownload(url, expectedSha256)
@@ -243,7 +163,7 @@ class MainActivity : FlutterActivity() {
 
     private fun resumePendingUpdateIfReady() {
         val url = pendingUpdateUrl ?: return
-        if (updateInFlight || updateReturnDialogShowing) return
+        if (updateInFlight) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
@@ -378,7 +298,6 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 val message = lastError?.message ?: "téléchargement"
-                UpdateApkCleanup.cancelPendingRelaunch(this)
                 emitUpdateProgress(
                     phase = "failed",
                     attempt = maxAttempts,
@@ -506,22 +425,16 @@ class MainActivity : FlutterActivity() {
     }
 
     /**
-     * Prefer [PackageInstaller] sessions — on Android TV, raw ACTION_VIEW often
-     * "succeeds" without showing the confirm UI until a 2nd attempt.
-     * Safe to call from a background thread (intent fallback hops to the UI).
+     * Open the complete system APK installer, including its Open/Done result
+     * screen. Session confirmation alone closes automatically after installing.
+     * Safe to call from a background thread (intent launch hops to the UI).
      */
     private fun openInstaller(apk: File) {
         if (!apk.exists() || apk.length() <= 0L) {
             throw IOException("APK manquant")
         }
         var lastError: Exception? = null
-        try {
-            installWithPackageInstaller(apk)
-            return
-        } catch (error: Exception) {
-            lastError = error
-        }
-        // Fallback: classic viewer intents with a couple of retries.
+        // Retry only if Android could not launch the installer at all.
         repeat(3) { index ->
             try {
                 openInstallerWithIntentOnUiThread(apk)
@@ -558,39 +471,6 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    private fun installWithPackageInstaller(apk: File) {
-        val installer = packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(
-            PackageInstaller.SessionParams.MODE_FULL_INSTALL,
-        )
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            params.setInstallReason(PackageManager.INSTALL_REASON_USER)
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            params.setRequireUserAction(
-                PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
-            )
-        }
-        // Full APK replacement kills the old process. setDontKillApp only
-        // applies to split-only installs; the update receiver handles return.
-        val sessionId = installer.createSession(params)
-        installer.openSession(sessionId).use { session ->
-            session.openWrite("fctv33-update", 0, apk.length()).use { out ->
-                FileInputStream(apk).use { input -> input.copyTo(out) }
-                session.fsync(out)
-            }
-            val callback = Intent(this, UpdateInstallReceiver::class.java).apply {
-                action = "com.fctv33.fctv33.UPDATE_INSTALL_RESULT"
-            }
-            var flags = PendingIntent.FLAG_UPDATE_CURRENT
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                flags = flags or PendingIntent.FLAG_MUTABLE
-            }
-            val pending = PendingIntent.getBroadcast(this, sessionId, callback, flags)
-            session.commit(pending.intentSender)
-        }
-    }
-
     private fun openInstallerWithIntent(apk: File) {
         val uri = FileProvider.getUriForFile(
             this,
@@ -599,18 +479,21 @@ class MainActivity : FlutterActivity() {
         )
         val viewIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
+            clipData = ClipData.newRawUri("FCTV33 update", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_RETURN_RESULT, false)
         }
         val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
             data = uri
+            clipData = ClipData.newRawUri("FCTV33 update", uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
             putExtra(Intent.EXTRA_RETURN_RESULT, false)
         }
         @Suppress("DEPRECATION")
-        val candidates = listOf(installIntent, viewIntent)
+        val candidates = listOf(viewIntent, installIntent)
         var launched = false
         for (intent in candidates) {
             val resolved = packageManager.queryIntentActivities(intent, 0)

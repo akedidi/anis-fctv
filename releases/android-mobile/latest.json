@@ -1,9 +1,9 @@
 {
   "channel": "android-mobile",
-  "versionCode": 10,
-  "versionName": "1.0.9",
+  "versionCode": 12,
+  "versionName": "1.0.11",
   "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-mobile-1.0.6/fctv-mobile-1.0.6.apk",
-  "changelog": "APK servi pour le code Downloader 2306515 — build 1.0.9 (10) : maj interne AnisFlix, purge APK cache.",
-  "publishedAt": "2026-10-21",
-  "sha256": "d16ca957a807fe6193125b6217c116011f01b9b476e9e1e6c17a23495375c5e4"
+  "changelog": "Build 1.0.11 (12) — nouveau système AnisFlix build 45 : installateur Android complet avec Ouvrir / Terminé, progression et reprises conservées, sans réouverture automatique ni permission de superposition. Code Downloader 2306515 inchangé.",
+  "publishedAt": "2026-10-24",
+  "sha256": "64c0e4b205162fb070f74b0ee6c3017a4d6a2b324cfbef010e178ccfd516bf61"
 }

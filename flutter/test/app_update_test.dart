@@ -13,27 +13,27 @@ void main() {
   final binding = TestWidgetsFlutterBinding.ensureInitialized();
   const channel = MethodChannel('fctv-update-test');
   const codec = StandardMethodCodec();
-  var installedBuild = 10;
+  var installedBuild = 11;
   var installCalls = 0;
   var installResult = 'started';
   final manifest = <String, Object>{
     'channel': 'android-tv',
-    'versionCode': 11,
-    'versionName': '1.0.10',
+    'versionCode': 12,
+    'versionName': '1.0.11',
     'apkUrl': 'https://example.com/fctv.apk',
     'sha256': 'test-digest',
-    'changelog': 'Automatic return after update',
+    'changelog': 'Android installer with Open / Done',
   };
 
   setUp(() {
-    installedBuild = 10;
+    installedBuild = 11;
     installCalls = 0;
     installResult = 'started';
     binding.defaultBinaryMessenger.setMockMethodCallHandler(channel, (
       call,
     ) async {
       if (call.method == 'getAppVersion') {
-        return {'versionCode': installedBuild, 'versionName': '1.0.9'};
+        return {'versionCode': installedBuild, 'versionName': '1.0.10'};
       }
       if (call.method == 'installUpdate') {
         installCalls++;
@@ -93,22 +93,22 @@ void main() {
 
   test('FCTV and AnisFlix manifest fields remain compatible', () {
     final update = AppUpdateInfo.fromJson({
-      'buildNumber': '11',
-      'version': '1.0.10',
+      'buildNumber': '12',
+      'version': '1.0.11',
       'downloadUrl': 'https://example.com/fctv.apk',
-      'releaseNotes': 'Return to app',
+      'releaseNotes': 'Open / Done',
     });
-    expect(update.versionCode, 11);
-    expect(update.versionName, '1.0.10');
-    expect(update.changelog, 'Return to app');
+    expect(update.versionCode, 12);
+    expect(update.versionName, '1.0.11');
+    expect(update.changelog, 'Open / Done');
   });
 
   test('only a strictly newer installed build is offered', () async {
     final updater = service();
-    expect((await updater.checkForUpdate())?.versionCode, 11);
-    installedBuild = 11;
-    expect(await updater.checkForUpdate(), isNull);
+    expect((await updater.checkForUpdate())?.versionCode, 12);
     installedBuild = 12;
+    expect(await updater.checkForUpdate(), isNull);
+    installedBuild = 13;
     expect(await updater.checkForUpdate(), isNull);
     installedBuild = 0;
     expect(await updater.checkForUpdate(), isNull);
@@ -190,6 +190,27 @@ void main() {
   );
 
   testWidgets(
+    'dismissing the system installer allows retry without a stuck download',
+    (tester) async {
+      await showButton(tester, service());
+      await startUpdate(tester);
+      await progress({'phase': 'awaiting_user', 'received': 100, 'total': 100});
+      await tester.pumpAndSettle();
+      expect(find.text('Confirm installation'), findsOneWidget);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      // ACTION_VIEW has no failure callback when the user cancels the installer.
+      // The original update remains actionable so native can reuse its cached APK.
+      await tester.tap(find.text('Confirm installation'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'Update'));
+      await tester.pump();
+      expect(installCalls, 2);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+    variant: const TargetPlatformVariant({TargetPlatform.android}),
+  );
+
+  testWidgets(
     'installer failure exposes retry instead of a permanent spinner',
     (tester) async {
       await showButton(tester, service());
@@ -201,7 +222,7 @@ void main() {
       expect(find.textContaining('Installation cancelled'), findsOneWidget);
       await tester.tap(find.text('Retry update'));
       await tester.pumpAndSettle();
-      expect(find.text('Update to 1.0.10'), findsOneWidget);
+      expect(find.text('Update to 1.0.11'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
     variant: const TargetPlatformVariant({TargetPlatform.android}),

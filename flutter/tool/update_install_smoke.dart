@@ -21,11 +21,12 @@ Future<void> main() async {
       (_) async => http.Response(
         jsonEncode({
           'channel': 'android-tv',
-          'versionCode': 11,
-          'versionName': '1.0.10',
+          'versionCode': 12,
+          'versionName': '1.0.11',
           'apkUrl': 'https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk',
           'sha256': digest,
-          'changelog': 'Test de l’installation Android et du retour automatique dans FCTV33.',
+          'changelog':
+              'Test de l’installation Android complète : Ouvrir / Terminé.',
         }),
         200,
       ),
