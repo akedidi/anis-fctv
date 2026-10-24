@@ -1,5 +1,14 @@
 package com.fctv33.fctv33
 
+import android.app.AlertDialog
+import android.app.PendingIntent
+import android.content.pm.PackageInstaller
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.content.Intent
@@ -24,6 +33,41 @@ import java.net.URL
 import java.security.MessageDigest
 
 class MainActivity : FlutterActivity() {
+    companion object {
+        @Volatile
+        private var progressBridge: MethodChannel? = null
+
+        fun emitUpdateProgressFromOutside(
+            phase: String,
+            received: Long = 0L,
+            total: Long = 0L,
+            attempt: Int = 1,
+            maxAttempts: Int = 3,
+            error: String? = null,
+        ) {
+            val channel = progressBridge ?: return
+            val payload = HashMap<String, Any?>().apply {
+                put("phase", phase)
+                put("received", received)
+                put("total", total)
+                put("attempt", attempt)
+                put("maxAttempts", maxAttempts)
+                if (error != null) put("error", error)
+            }
+            // Receiver may run off the main thread.
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                channel.invokeMethod("updateInstallProgress", payload)
+            }
+        }
+    }
+
+    private var platformBridge: MethodChannel? = null
+    @Volatile private var updateInFlight = false
+    @Volatile private var lastProgressEmitMs = 0L
+    private var pendingUpdateUrl: String? = null
+    private var pendingUpdateSha256: String? = null
+    private var updateReturnDialogShowing = false
+
     private val channelName = "com.fctv33.fctv33/platform"
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -38,10 +82,22 @@ class MainActivity : FlutterActivity() {
         UpdateApkCleanup.cleanupIfPending(this)
     }
 
+    override fun onResume() {
+        super.onResume()
+        resumePendingUpdateIfReady()
+    }
+
+    override fun onDestroy() {
+        if (progressBridge === platformBridge) progressBridge = null
+        platformBridge = null
+        super.onDestroy()
+    }
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
-            .setMethodCallHandler { call, result ->
+        platformBridge = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
+        progressBridge = platformBridge
+        platformBridge!!.setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isAndroidTv" -> result.success(isAndroidTv())
                     "isAndroidEmulator" -> result.success(isAndroidEmulator())
@@ -92,65 +148,247 @@ class MainActivity : FlutterActivity() {
         )
     }
 
-    /**
-     * Starts download on a background thread and returns immediately.
-     * Status: started | settings | invalid_url
-     */
+    private fun emitUpdateProgress(
+        phase: String,
+        received: Long = 0L,
+        total: Long = 0L,
+        attempt: Int = 1,
+        maxAttempts: Int = 3,
+        error: String? = null,
+    ) {
+        val payload = HashMap<String, Any?>().apply {
+            put("phase", phase)
+            put("received", received)
+            put("total", total)
+            put("attempt", attempt)
+            put("maxAttempts", maxAttempts)
+            if (error != null) put("error", error)
+        }
+        runOnUiThread {
+            platformBridge?.invokeMethod("updateInstallProgress", payload)
+        }
+    }
+
     private fun installUpdate(url: String, expectedSha256: String): String {
         if (!url.startsWith("https://")) return "invalid_url"
+        if (updateInFlight) return "busy"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             !packageManager.canRequestPackageInstalls()
         ) {
-            try {
-                startActivity(
-                    Intent(
-                        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:$packageName"),
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            } catch (_: Exception) {
+            // Remember the request so returning from Settings starts the download
+            // without needing a 2nd click.
+            pendingUpdateUrl = url
+            pendingUpdateSha256 = expectedSha256
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:$packageName"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            return "settings"
+        }
+
+        val updatePrefs = getSharedPreferences("fctv_updates", MODE_PRIVATE)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            !Settings.canDrawOverlays(this) &&
+            !updatePrefs.getBoolean("auto_return_permission_declined", false)
+        ) {
+            pendingUpdateUrl = url
+            pendingUpdateSha256 = expectedSha256
+            if (!updateReturnDialogShowing) {
+                updateReturnDialogShowing = true
+                AlertDialog.Builder(this)
+                    .setTitle("Retour automatique après mise à jour")
+                    .setMessage(
+                        "Android ferme FCTV33 pendant l’installation. Pour rouvrir " +
+                            "l’app automatiquement, autorisez « Afficher par-dessus les autres " +
+                            "applications » dans l’écran suivant. Cette autorisation est " +
+                            "facultative : sans elle, vous devrez rouvrir l’app manuellement.",
+                    )
+                    .setPositiveButton("Autoriser") { _, _ ->
+                        // Opening Android settings is not a permission grant.
+                        // On return, recheck the permission before proceeding.
+                        updateReturnDialogShowing = false
+                        try {
+                            updatePrefs.edit().putBoolean("auto_return_permission_declined", true).apply()
+                            startActivity(Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:$packageName"),
+                            ))
+                        } catch (_: Exception) {
+                            resumePendingUpdateIfReady()
+                        }
+                    }
+                    .setNegativeButton("Continuer sans") { _, _ ->
+                        updatePrefs.edit().putBoolean("auto_return_permission_declined", true).apply()
+                        updateReturnDialogShowing = false
+                        resumePendingUpdateIfReady()
+                    }
+                    .setOnCancelListener {
+                        updateReturnDialogShowing = false
+                        pendingUpdateUrl = null
+                        pendingUpdateSha256 = null
+                        emitUpdateProgress(phase = "failed", error = "Installation annulée")
+                    }
+                    .show()
             }
             return "settings"
         }
 
+        pendingUpdateUrl = null
+        pendingUpdateSha256 = null
+        beginUpdateDownload(url, expectedSha256)
+        return "started"
+    }
+
+    private fun resumePendingUpdateIfReady() {
+        val url = pendingUpdateUrl ?: return
+        if (updateInFlight || updateReturnDialogShowing) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !packageManager.canRequestPackageInstalls()
+        ) {
+            return
+        }
+        val sha = pendingUpdateSha256.orEmpty()
+        pendingUpdateUrl = null
+        pendingUpdateSha256 = null
+        installUpdate(url, sha)
+    }
+
+    private fun beginUpdateDownload(url: String, expectedSha256: String) {
+        if (updateInFlight) return
+        updateInFlight = true
+        val maxAttempts = 3
         Thread {
+            val apk = UpdateApkCleanup.updateApk(this)
+            var lastError: Exception? = null
             try {
                 UpdateApkCleanup.updateDirectory(this).mkdirs()
-                val apk = UpdateApkCleanup.updateApk(this)
-                if (apk.exists()) apk.delete()
-                // GitHub release assets 302 to release-assets.githubusercontent.com.
-                // HttpURLConnection auto-redirect often surfaces that as a 404 on Fire TV.
-                downloadFollowingRedirects(url, apk)
-
-                if (!apk.exists() || apk.length() < 1024) {
-                    throw IllegalStateException("APK download incomplete")
+                // If a previous attempt left a valid APK, skip straight to install
+                // (this is what the user experienced as needing a "2nd click").
+                if (apk.exists() &&
+                    expectedSha256.isNotBlank() &&
+                    sha256Of(apk).equals(expectedSha256.trim(), ignoreCase = true)
+                ) {
+                    try {
+                        emitUpdateProgress(
+                            phase = "installing",
+                            received = apk.length(),
+                            total = apk.length(),
+                        )
+                        UpdateApkCleanup.markPendingCleanup(this)
+                        openInstaller(apk)
+                        emitUpdateProgress(
+                            phase = "awaiting_user",
+                            received = apk.length(),
+                            total = apk.length(),
+                        )
+                        return@Thread
+                    } catch (error: Exception) {
+                        lastError = error
+                    }
                 }
+                for (attempt in 1..maxAttempts) {
+                    try {
+                        if (apk.exists()) apk.delete()
+                        emitUpdateProgress(
+                            phase = if (attempt == 1) "downloading" else "retrying",
+                            attempt = attempt,
+                            maxAttempts = maxAttempts,
+                        )
+                        // Always cache-bust — TV CDNs often serve a bad body on
+                        // the first pristine URL hit.
+                        val downloadUrl = Uri.parse(url).buildUpon()
+                            .appendQueryParameter("t", System.currentTimeMillis().toString())
+                            .appendQueryParameter("attempt", attempt.toString())
+                            .build()
+                            .toString()
+                        downloadFollowingRedirects(downloadUrl, apk, attempt, maxAttempts)
 
-                if (expectedSha256.isNotBlank()) {
-                    val digest = MessageDigest.getInstance("SHA-256")
-                    apk.inputStream().buffered().use { input ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            digest.update(buffer, 0, count)
+                        if (expectedSha256.isNotBlank()) {
+                            emitUpdateProgress(
+                                phase = "verifying",
+                                received = apk.length(),
+                                total = apk.length(),
+                                attempt = attempt,
+                                maxAttempts = maxAttempts,
+                            )
+                            val digest = MessageDigest.getInstance("SHA-256")
+                            apk.inputStream().buffered().use { input ->
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    digest.update(buffer, 0, count)
+                                }
+                            }
+                            val actual = digest.digest().joinToString("") {
+                                "%02x".format(it)
+                            }
+                            if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
+                                UpdateApkCleanup.deleteCachedApk(this)
+                                throw IllegalStateException("SHA-256 mismatch")
+                            }
+                        }
+
+                        emitUpdateProgress(
+                            phase = "installing",
+                            received = apk.length(),
+                            total = apk.length(),
+                            attempt = attempt,
+                            maxAttempts = maxAttempts,
+                        )
+                        // Remember to wipe the APK once the new package is running.
+                        UpdateApkCleanup.markPendingCleanup(this)
+                        // Brief settle so TV FS sees the fully synced APK.
+                        try {
+                            Thread.sleep(400)
+                        } catch (_: InterruptedException) {
+                        }
+                        openInstaller(apk)
+                        emitUpdateProgress(
+                            phase = "awaiting_user",
+                            received = apk.length(),
+                            total = apk.length(),
+                            attempt = attempt,
+                            maxAttempts = maxAttempts,
+                        )
+                        return@Thread
+                    } catch (error: Exception) {
+                        lastError = error
+                        // Keep a verified APK when only the installer UI failed —
+                        // deleting forced a full 2nd download for the user.
+                        val installerOnly = error.message?.contains("Installateur") == true ||
+                            error is android.content.ActivityNotFoundException
+                        if (!installerOnly) {
+                            UpdateApkCleanup.deleteCachedApk(this)
+                        }
+                        if (attempt < maxAttempts) {
+                            emitUpdateProgress(
+                                phase = "retrying",
+                                attempt = attempt + 1,
+                                maxAttempts = maxAttempts,
+                                error = error.message,
+                            )
+                            try {
+                                Thread.sleep(1_200L * attempt)
+                            } catch (_: InterruptedException) {
+                            }
                         }
                     }
-                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
-                    if (!actual.equals(expectedSha256.trim(), ignoreCase = true)) {
-                        UpdateApkCleanup.deleteCachedApk(this)
-                        throw IllegalStateException("SHA-256 mismatch")
-                    }
                 }
-
-                // Remember to wipe the APK once the new package is running.
-                UpdateApkCleanup.markPendingCleanup(this)
-                runOnUiThread { openInstaller(apk) }
-            } catch (error: Exception) {
+                val message = lastError?.message ?: "téléchargement"
+                UpdateApkCleanup.cancelPendingRelaunch(this)
+                emitUpdateProgress(
+                    phase = "failed",
+                    attempt = maxAttempts,
+                    maxAttempts = maxAttempts,
+                    error = message,
+                )
                 runOnUiThread {
                     Toast.makeText(
                         this,
-                        "Update failed: ${error.message ?: "download"}",
+                        "Échec MAJ: $message",
                         Toast.LENGTH_LONG,
                     ).show()
                     // Last resort: open the release URL in the browser / downloader.
@@ -163,37 +401,86 @@ class MainActivity : FlutterActivity() {
                     } catch (_: Exception) {
                     }
                 }
+            } finally {
+                updateInFlight = false
             }
         }.start()
-        return "started"
     }
 
     /** Follows cross-host HTTPS redirects manually (GitHub → CDN). */
-    private fun downloadFollowingRedirects(url: String, target: File) {
+    private fun downloadFollowingRedirects(
+        url: String,
+        target: File,
+        attempt: Int,
+        maxAttempts: Int,
+    ) {
         var current = url
         repeat(8) {
             val connection = (URL(current).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = false
                 connectTimeout = 30_000
                 readTimeout = 300_000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", "FCTV33-Updater")
+                setRequestProperty("User-Agent", "FCTV33-Android-Updater")
                 setRequestProperty("Accept", "*/*")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("Pragma", "no-cache")
             }
             try {
                 val code = connection.responseCode
                 when {
                     code in 300..399 -> {
                         val location = connection.getHeaderField("Location")
-                            ?: throw IOException("HTTP $code without Location")
-                        current = URI(current).resolve(location).toString()
+                            ?: throw IOException("HTTP $code sans Location")
+                        val next = URI(current).resolve(location)
+                        if (!next.scheme.equals("https", ignoreCase = true)) {
+                            throw IOException("Redirection non HTTPS")
+                        }
+                        current = next.toString()
                     }
                     code == HttpURLConnection.HTTP_OK -> {
+                        val total = connection.contentLengthLong.coerceAtLeast(0L)
+                        var received = 0L
+                        lastProgressEmitMs = 0L
                         connection.inputStream.use { input ->
-                            target.outputStream().buffered().use { output ->
-                                input.copyTo(output)
+                            FileOutputStream(target).use { fileOut ->
+                                fileOut.channel.truncate(0)
+                                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                                while (true) {
+                                    val count = input.read(buffer)
+                                    if (count < 0) break
+                                    fileOut.write(buffer, 0, count)
+                                    received += count
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastProgressEmitMs >= 250L ||
+                                        (total > 0L && received >= total)
+                                    ) {
+                                        lastProgressEmitMs = now
+                                        emitUpdateProgress(
+                                            phase = "downloading",
+                                            received = received,
+                                            total = total,
+                                            attempt = attempt,
+                                            maxAttempts = maxAttempts,
+                                        )
+                                    }
+                                }
+                                fileOut.flush()
+                                fileOut.fd.sync()
                             }
                         }
+                        if (received <= 0L) {
+                            throw IOException("Fichier vide")
+                        }
+                        if (total > 0L && received < total) {
+                            throw IOException("Téléchargement incomplet ($received/$total)")
+                        }
+                        emitUpdateProgress(
+                            phase = "downloading",
+                            received = received,
+                            total = if (total > 0L) total else received,
+                            attempt = attempt,
+                            maxAttempts = maxAttempts,
+                        )
                         return
                     }
                     else -> throw IOException("HTTP $code")
@@ -202,22 +489,147 @@ class MainActivity : FlutterActivity() {
                 connection.disconnect()
             }
         }
-        throw IOException("Too many redirects")
+        throw IOException("Trop de redirections")
     }
 
+    private fun sha256Of(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        FileInputStream(file).buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * Prefer [PackageInstaller] sessions — on Android TV, raw ACTION_VIEW often
+     * "succeeds" without showing the confirm UI until a 2nd attempt.
+     * Safe to call from a background thread (intent fallback hops to the UI).
+     */
     private fun openInstaller(apk: File) {
+        if (!apk.exists() || apk.length() <= 0L) {
+            throw IOException("APK manquant")
+        }
+        var lastError: Exception? = null
+        try {
+            installWithPackageInstaller(apk)
+            return
+        } catch (error: Exception) {
+            lastError = error
+        }
+        // Fallback: classic viewer intents with a couple of retries.
+        repeat(3) { index ->
+            try {
+                openInstallerWithIntentOnUiThread(apk)
+                return
+            } catch (error: Exception) {
+                lastError = error
+                if (index < 2) {
+                    try {
+                        Thread.sleep(700L * (index + 1))
+                    } catch (_: InterruptedException) {
+                    }
+                }
+            }
+        }
+        throw lastError ?: IOException("Installateur non ouvert")
+    }
+
+    private fun openInstallerWithIntentOnUiThread(apk: File) {
+        val opened = AtomicBoolean(false)
+        val errorRef = AtomicReference<Exception?>(null)
+        val latch = CountDownLatch(1)
+        runOnUiThread {
+            try {
+                openInstallerWithIntent(apk)
+                opened.set(true)
+            } catch (error: Exception) {
+                errorRef.set(error)
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!latch.await(8, TimeUnit.SECONDS) || !opened.get()) {
+            throw errorRef.get() ?: IOException("Installateur non ouvert")
+        }
+    }
+
+    private fun installWithPackageInstaller(apk: File) {
+        val installer = packageManager.packageInstaller
+        val params = PackageInstaller.SessionParams(
+            PackageInstaller.SessionParams.MODE_FULL_INSTALL,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            params.setInstallReason(PackageManager.INSTALL_REASON_USER)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            params.setRequireUserAction(
+                PackageInstaller.SessionParams.USER_ACTION_REQUIRED,
+            )
+        }
+        // Full APK replacement kills the old process. setDontKillApp only
+        // applies to split-only installs; the update receiver handles return.
+        val sessionId = installer.createSession(params)
+        installer.openSession(sessionId).use { session ->
+            session.openWrite("fctv33-update", 0, apk.length()).use { out ->
+                FileInputStream(apk).use { input -> input.copyTo(out) }
+                session.fsync(out)
+            }
+            val callback = Intent(this, UpdateInstallReceiver::class.java).apply {
+                action = "com.fctv33.fctv33.UPDATE_INSTALL_RESULT"
+            }
+            var flags = PendingIntent.FLAG_UPDATE_CURRENT
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                flags = flags or PendingIntent.FLAG_MUTABLE
+            }
+            val pending = PendingIntent.getBroadcast(this, sessionId, callback, flags)
+            session.commit(pending.intentSender)
+        }
+    }
+
+    private fun openInstallerWithIntent(apk: File) {
         val uri = FileProvider.getUriForFile(
             this,
             "$packageName.fileprovider",
             apk,
         )
-        startActivity(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            },
-        )
+        val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+            data = uri
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+            putExtra(Intent.EXTRA_RETURN_RESULT, false)
+        }
+        @Suppress("DEPRECATION")
+        val candidates = listOf(installIntent, viewIntent)
+        var launched = false
+        for (intent in candidates) {
+            val resolved = packageManager.queryIntentActivities(intent, 0)
+            for (info in resolved) {
+                grantUriPermission(
+                    info.activityInfo.packageName,
+                    uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                )
+            }
+            if (intent.resolveActivity(packageManager) != null) {
+                startActivity(intent)
+                launched = true
+                break
+            }
+        }
+        if (!launched) {
+            startActivity(viewIntent)
+        }
     }
 
     private fun isAndroidTv(): Boolean {

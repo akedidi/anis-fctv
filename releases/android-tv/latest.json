@@ -1,9 +1,9 @@
 {
   "channel": "android-tv",
-  "versionCode": 10,
-  "versionName": "1.0.9",
+  "versionCode": 11,
+  "versionName": "1.0.10",
   "apkUrl": "https://github.com/akedidi/anis-fctv/releases/download/android-tv-1.0.3/fctv-tv-1.0.3.apk",
-  "changelog": "APK servi pour le code Downloader 5471757 — build 1.0.9 (10) : maj interne AnisFlix, purge APK cache, fix Fire OS vert.",
-  "publishedAt": "2026-10-21",
-  "sha256": "d16ca957a807fe6193125b6217c116011f01b9b476e9e1e6c17a23495375c5e4"
+  "changelog": "Build 1.0.10 (11) — mise à jour comme AnisFlix TV build 41 : progression, reprises automatiques, installation Android et retour différé dans FCTV33 après remplacement de l’APK. Code Downloader 5471757 inchangé.",
+  "publishedAt": "2026-10-24",
+  "sha256": "9801230895f15b34762207acbd94e0cef5effcdc16fc0ccbe76e3fe5f2900fe7"
 }

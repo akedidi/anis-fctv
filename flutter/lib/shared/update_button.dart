@@ -11,15 +11,20 @@ import 'tv_focus.dart';
 /// Top-right update control — visible only when a newer APK is on the git channel.
 /// Flow matches AnisFlix Android TV: poll → tap → native download → system installer.
 class AppUpdateButton extends StatefulWidget {
-  const AppUpdateButton({super.key});
+  const AppUpdateButton({super.key, this.service});
+
+  final AppUpdateService? service;
 
   @override
   State<AppUpdateButton> createState() => _AppUpdateButtonState();
 }
 
 class _AppUpdateButtonState extends State<AppUpdateButton> {
-  final _service = AppUpdateService();
+  late final AppUpdateService _service;
   AppUpdateInfo? _update;
+  AppUpdateProgress? _progress;
+  StreamSubscription<AppUpdateProgress>? _progressSub;
+  bool _checking = false;
   bool _busy = false;
   String? _status;
   Timer? _poll;
@@ -27,31 +32,64 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
   @override
   void initState() {
     super.initState();
+    _service = widget.service ?? AppUpdateService();
     if (_service.isSupported) {
+      _progressSub = _service.progress.listen(_onProgress);
       unawaited(_refresh());
       // Same cadence as AnisFlix TV update checks.
-      _poll = Timer.periodic(const Duration(seconds: 30), (_) => unawaited(_refresh()));
+      _poll = Timer.periodic(
+        const Duration(seconds: 30),
+        (_) => unawaited(_refresh()),
+      );
     }
   }
 
   @override
   void dispose() {
     _poll?.cancel();
+    unawaited(_progressSub?.cancel());
+    _service.dispose();
     super.dispose();
   }
 
   Future<void> _refresh() async {
-    if (_busy) return;
-    final info = await _service.checkForUpdate();
+    if (_busy || _checking) return;
+    _checking = true;
+    final result = await _service.checkLatest();
+    _checking = false;
     if (!mounted) return;
+    // Keep an already detected update through a transient network failure.
+    if (result == null) return;
+    final info = result.latest.isNewerThan(result.installed)
+        ? result.latest
+        : null;
     setState(() {
-      // null ⇒ already on latest (or check failed) ⇒ hide the button
       _update = info;
       if (info == null) {
         _busy = false;
         _status = null;
+        _progress = null;
       }
     });
+  }
+
+  void _onProgress(AppUpdateProgress progress) {
+    if (!mounted) return;
+    setState(() {
+      _progress = progress;
+      _busy = progress.busy;
+      _status = progress.label;
+    });
+    if (progress.phase == 'failed') {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Update failed: ${progress.error ?? 'installation'}'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } else if (progress.phase == 'done') {
+      unawaited(_refresh());
+    }
   }
 
   Future<void> _onPressed() async {
@@ -74,7 +112,10 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
             title: Text('Update to ${info.versionName}'),
             content: body,
             actions: [
-              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Later')),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('Later'),
+              ),
               FilledButton(
                 onPressed: () => Navigator.pop(ctx, true),
                 child: const Text('Update'),
@@ -130,20 +171,28 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
     setState(() {
       _busy = true;
       _status = 'Downloading…';
+      _progress = const AppUpdateProgress(phase: 'downloading');
     });
     final result = await _service.installUpdate(info);
     if (!mounted) return;
 
-    // Native returns immediately with "started" while download continues —
-    // unlock the UI like AnisFlix so menus stay usable.
-    setState(() {
-      _busy = false;
-      _status = null;
-    });
+    // Native owns the download until progress reports the installer or a failure.
+    // Keep the button and progress visible; the rest of the app stays navigable.
+    if (result != 'started' && result != 'busy') {
+      setState(() {
+        _busy = false;
+        _progress = result == 'settings'
+            ? const AppUpdateProgress(phase: 'awaiting_permission')
+            : null;
+        _status = _progress?.label;
+      });
+    }
 
     final message = switch (result) {
-      'started' => 'Download started. The installer will open automatically.',
-      'settings' => 'Allow FCTV33 to install apps, then tap Update again.',
+      'started' => null,
+      'busy' => 'An update is already in progress.',
+      'settings' =>
+        'Complete the permission screen. The update will resume automatically.',
       'invalid_url' => 'Invalid update URL.',
       'ignored' => null,
       _ => 'Unable to start the update.',
@@ -152,10 +201,6 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
-    }
-    if (result == 'started') {
-      // Hide until a newer build appears after relaunch.
-      setState(() => _update = null);
     }
   }
 
@@ -166,29 +211,53 @@ class _AppUpdateButtonState extends State<AppUpdateButton> {
       return const SizedBox.shrink();
     }
 
-    final label = _busy ? (_status ?? '…') : 'Update';
+    final label = _progress?.label ?? (_busy ? (_status ?? '…') : 'Update');
     final content = Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      child: Row(
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (_busy)
-            const SizedBox(
-              width: 14,
-              height: 14,
-              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.black),
-            )
-          else
-            const Icon(Icons.system_update_alt_rounded, size: 16, color: Colors.black),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              color: Colors.black,
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_busy)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.black,
+                  ),
+                )
+              else
+                const Icon(
+                  Icons.system_update_alt_rounded,
+                  size: 16,
+                  color: Colors.black,
+                ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
+          if (_busy) ...[
+            const SizedBox(height: 5),
+            SizedBox(
+              width: 132,
+              child: LinearProgressIndicator(
+                value: _progress?.indicatorValue,
+                minHeight: 3,
+                color: Colors.black,
+                backgroundColor: Colors.black12,
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -271,7 +340,9 @@ class _TvUpdateDialogActionState extends State<_TvUpdateDialogAction> {
             duration: const Duration(milliseconds: 120),
             padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
             decoration: BoxDecoration(
-              color: _focused ? FctvColors.accent : Colors.white.withValues(alpha: 0.08),
+              color: _focused
+                  ? FctvColors.accent
+                  : Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(10),
               border: Border.all(
                 color: _focused ? FctvColors.accent : Colors.white24,
@@ -289,10 +360,7 @@ class _TvUpdateDialogActionState extends State<_TvUpdateDialogAction> {
             ),
             child: Text(
               widget.label,
-              style: TextStyle(
-                fontWeight: FontWeight.w800,
-                color: fg,
-              ),
+              style: TextStyle(fontWeight: FontWeight.w800, color: fg),
             ),
           ),
         ),

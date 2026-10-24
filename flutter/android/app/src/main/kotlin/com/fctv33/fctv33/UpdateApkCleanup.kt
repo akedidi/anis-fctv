@@ -4,11 +4,12 @@ import android.content.Context
 import android.os.Build
 import java.io.File
 
-/** Cached self-update APK under cacheDir/updates/ (AnisFlix-compatible). */
+/** Cached self-update APK under cacheDir/updates/. */
 object UpdateApkCleanup {
     private const val PREFS = "fctv_updates"
     private const val KEY_PENDING_CLEANUP = "pending_update_apk_cleanup"
     private const val KEY_PRE_UPDATE_BUILD = "pre_update_build"
+    private const val KEY_PENDING_RELAUNCH = "pending_update_relaunch"
     private const val APK_NAME = "fctv33-update.apk"
 
     fun updateDirectory(context: Context): File =
@@ -22,7 +23,25 @@ object UpdateApkCleanup {
             .edit()
             .putBoolean(KEY_PENDING_CLEANUP, true)
             .putLong(KEY_PRE_UPDATE_BUILD, currentBuild(context))
-            .apply()
+            .putBoolean(KEY_PENDING_RELAUNCH, true)
+            // Persist before the installer replaces and kills this process.
+            .commit()
+    }
+
+    @Synchronized
+    fun consumePendingRelaunch(context: Context): Boolean {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val pending = prefs.getBoolean(
+            KEY_PENDING_RELAUNCH,
+            prefs.getBoolean(KEY_PENDING_CLEANUP, false),
+        )
+        if (!pending) return false
+        return prefs.edit().putBoolean(KEY_PENDING_RELAUNCH, false).commit()
+    }
+
+    fun cancelPendingRelaunch(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_PENDING_RELAUNCH, false).commit()
     }
 
     fun deleteCachedApk(context: Context) {
@@ -31,12 +50,6 @@ object UpdateApkCleanup {
         val dir = updateDirectory(context)
         if (dir.isDirectory && dir.list().isNullOrEmpty()) {
             dir.delete()
-        }
-        // Also drop legacy flat-cache APKs from older updater builds.
-        listOfNotNull(context.cacheDir, context.externalCacheDir).forEach { root ->
-            root.listFiles()
-                ?.filter { it.isFile && it.name.endsWith(".apk", ignoreCase = true) }
-                ?.forEach { runCatching { it.delete() } }
         }
         clearPending(context)
     }
