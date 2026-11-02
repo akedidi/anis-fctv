@@ -579,7 +579,10 @@ class StreamPlayerState extends State<StreamPlayer> {
   /// D-pad between play (center) and the corner controls (aspect, exit).
   KeyEventResult _moveFullscreenControl(LogicalKeyboardKey key) {
     if (_playFocus.hasFocus) {
-      if (key == LogicalKeyboardKey.arrowDown || key == LogicalKeyboardKey.arrowRight) {
+      if (key == LogicalKeyboardKey.arrowDown && focusFullscreenButton()) {
+        return KeyEventResult.handled;
+      }
+      if (key == LogicalKeyboardKey.arrowRight) {
         (_aspectFocus.context != null ? _aspectFocus : _exitFsFocus).requestFocus();
         return KeyEventResult.handled;
       }
@@ -1227,7 +1230,16 @@ class StreamPlayerState extends State<StreamPlayer> {
                     child: FocusTraversalOrder(
                       order: const NumericFocusOrder(1),
                       child: TvFocusIconButton(
-                        focusNode: widget.isFullscreen ? _playFocus : null,
+                        focusNode: _playFocus,
+                        onKey: (event) {
+                          if (event is KeyDownEvent &&
+                              event.logicalKey == LogicalKeyboardKey.arrowDown &&
+                              focusFullscreenButton()) {
+                            _bumpAutoHide();
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
                         tooltip: _playing ? 'Pause' : 'Play',
                         icon: _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
                         onPressed: () {

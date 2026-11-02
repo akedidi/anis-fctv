@@ -38,6 +38,7 @@ class TvSearchField extends StatefulWidget {
 
 class _TvSearchFieldState extends State<TvSearchField> {
   final _chipFocus = FocusNode(debugLabel: 'tv search chip');
+  final _firstLetterFocus = FocusNode(debugLabel: 'tv search first letter');
   bool _padOpen = false;
 
   @override
@@ -54,6 +55,7 @@ class _TvSearchFieldState extends State<TvSearchField> {
   void dispose() {
     widget.controller.removeListener(_onText);
     _chipFocus.dispose();
+    _firstLetterFocus.dispose();
     super.dispose();
   }
 
@@ -98,7 +100,14 @@ class _TvSearchFieldState extends State<TvSearchField> {
   KeyEventResult _onChipKey(FocusNode node, KeyEvent event) {
     if (event is! KeyDownEvent) return KeyEventResult.ignored;
 
-    // Leave search with D-pad — never trap arrows on this control.
+    // Enter the separate letter-pad traversal group explicitly instead of
+    // letting the wide search chip's geometry choose a directional target.
+    if (_padOpen && event.logicalKey == LogicalKeyboardKey.arrowDown) {
+      _firstLetterFocus.requestFocus();
+      return KeyEventResult.handled;
+    }
+
+    // Leave search with D-pad when the pad is closed.
     final dir = switch (event.logicalKey) {
       LogicalKeyboardKey.arrowDown => TraversalDirection.down,
       LogicalKeyboardKey.arrowUp => TraversalDirection.up,
@@ -229,6 +238,7 @@ class _TvSearchFieldState extends State<TvSearchField> {
               return KeyEventResult.ignored;
             },
             child: _TvLetterPad(
+              firstLetterFocus: _firstLetterFocus,
               onChar: _append,
               onSpace: () => _append(' '),
               onBackspace: _backspace,
@@ -244,6 +254,7 @@ class _TvSearchFieldState extends State<TvSearchField> {
 
 class _TvLetterPad extends StatelessWidget {
   const _TvLetterPad({
+    required this.firstLetterFocus,
     required this.onChar,
     required this.onSpace,
     required this.onBackspace,
@@ -251,6 +262,7 @@ class _TvLetterPad extends StatelessWidget {
     required this.onDone,
   });
 
+  final FocusNode firstLetterFocus;
   final ValueChanged<String> onChar;
   final VoidCallback onSpace;
   final VoidCallback onBackspace;
@@ -287,6 +299,7 @@ class _TvLetterPad extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 2),
                           child: TvFocusable(
                             autofocus: r == 0 && i == 0,
+                            focusNode: r == 0 && i == 0 ? firstLetterFocus : null,
                             onActivate: () => onChar(_rows[r][i].toLowerCase()),
                             borderRadius: 8,
                             scale: 1.1,
